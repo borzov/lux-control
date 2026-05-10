@@ -27,6 +27,7 @@ public actor BrightnessModel {
     }
 
     public func refreshDisplays() async {
+        let selectedStableKey = snapshot.selectedDisplay?.stableKey
         let displays = await controller.discover()
         var states: [String: DisplayState] = [:]
 
@@ -36,7 +37,7 @@ public actor BrightnessModel {
 
         snapshot = BrightnessSnapshot(
             displays: displays,
-            selectedDisplay: displays.first(where: \.isControllable),
+            selectedDisplay: selectedDisplay(in: displays, preserving: selectedStableKey),
             states: states,
             lastError: nil
         )
@@ -58,10 +59,10 @@ public actor BrightnessModel {
             do {
                 try await controller.setBrightness(value, for: display.id)
             } catch {
-                throw mapWriteError(error)
+                throw normalizedControlError(error)
             }
 
-            updateStateIfCurrentDisplay(stableKey: stableKey) { current in
+            updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
         } catch {
@@ -81,10 +82,10 @@ public actor BrightnessModel {
             do {
                 try await controller.setBoostEnabled(enabled, for: display.id)
             } catch {
-                throw mapWriteError(error)
+                throw normalizedControlError(error)
             }
 
-            updateStateIfCurrentDisplay(stableKey: stableKey) { current in
+            updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
         } catch {
@@ -100,13 +101,20 @@ public actor BrightnessModel {
         return display
     }
 
-    private func updateStateIfCurrentDisplay(
+    private func selectedDisplay(in displays: [Display], preserving stableKey: String?) -> Display? {
+        if let stableKey,
+           let display = displays.first(where: { $0.stableKey == stableKey }) {
+            return display
+        }
+
+        return displays.first(where: \.isControllable)
+    }
+
+    private func updateStateIfDisplayExists(
         stableKey: String,
         _ transform: (DisplayState) -> DisplayState
     ) {
-        guard snapshot.selectedDisplay?.stableKey == stableKey,
-              snapshot.displays.contains(where: { $0.stableKey == stableKey })
-        else {
+        guard snapshot.displays.contains(where: { $0.stableKey == stableKey }) else {
             return
         }
 
@@ -116,12 +124,12 @@ public actor BrightnessModel {
     }
 
     private func recordFailure(_ error: any Error) -> DisplayControlError {
-        let controlError = mapWriteError(error)
+        let controlError = normalizedControlError(error)
         snapshot.lastError = controlError.localizedDescription
         return controlError
     }
 
-    private func mapWriteError(_ error: any Error) -> DisplayControlError {
+    private func normalizedControlError(_ error: any Error) -> DisplayControlError {
         if let controlError = error as? DisplayControlError {
             return controlError
         }

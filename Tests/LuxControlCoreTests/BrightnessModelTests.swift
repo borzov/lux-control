@@ -25,6 +25,20 @@ struct BrightnessModelTests {
         #expect(snapshot.lastError == nil)
     }
 
+    @Test("refreshDisplays preserves selected display when it is still present")
+    func refreshDisplaysPreservesSelectedDisplayWhenItIsStillPresent() async {
+        let first = display(id: 4, name: "First", supportLevel: .full)
+        let second = display(id: 5, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        await model.selectDisplay(stableKey: second.stableKey)
+        await model.refreshDisplays()
+
+        #expect(await model.snapshot.selectedDisplay == second)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)
@@ -155,8 +169,8 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("ddc failed").localizedDescription)
     }
 
-    @Test("setBrightness does not update stale snapshot after selection changes during write")
-    func setBrightnessDoesNotUpdateStaleSnapshotAfterSelectionChangesDuringWrite() async throws {
+    @Test("setBrightness updates original display state after selection changes during write")
+    func setBrightnessUpdatesOriginalDisplayStateAfterSelectionChangesDuringWrite() async throws {
         let first = display(id: 91, name: "First", supportLevel: .full)
         let second = display(id: 92, name: "Second", supportLevel: .full)
         let controller = MockDisplayController(displays: [first, second])
@@ -170,8 +184,28 @@ struct BrightnessModelTests {
 
         #expect(await controller.setBrightnessCalls == [first.id])
         #expect(await model.snapshot.selectedDisplay == second)
-        #expect(await model.snapshot.states["cg-91"]?.brightness == .init(percent: 50))
+        #expect(await model.snapshot.states["cg-91"]?.brightness == .init(percent: 25))
         #expect(await model.snapshot.states["cg-92"]?.brightness == .init(percent: 50))
+    }
+
+    @Test("setBrightness skips snapshot update when original display disappears during write")
+    func setBrightnessSkipsSnapshotUpdateWhenOriginalDisplayDisappearsDuringWrite() async throws {
+        let first = display(id: 101, name: "First", supportLevel: .full)
+        let second = display(id: 102, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        await controller.setOnSetBrightness {
+            await controller.setDisplays([second])
+            await model.refreshDisplays()
+        }
+
+        try await model.setBrightness(.init(percent: 35))
+
+        #expect(await controller.setBrightnessCalls == [first.id])
+        #expect(await model.snapshot.displays == [second])
+        #expect(await model.snapshot.states["cg-101"] == nil)
+        #expect(await model.snapshot.states["cg-102"]?.brightness == .init(percent: 50))
     }
 
     private func display(id: UInt32, name: String, supportLevel: DisplaySupportLevel) -> Display {
@@ -250,6 +284,10 @@ actor MockDisplayController: DisplayControlling {
 
     func setStoredState(_ state: DisplayState, for display: DisplayID) {
         states[stableKey(for: display)] = state
+    }
+
+    func setDisplays(_ displays: [Display]) {
+        self.displays = displays
     }
 
     func state(for display: DisplayID) -> DisplayState {
