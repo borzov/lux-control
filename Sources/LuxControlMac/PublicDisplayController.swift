@@ -2,10 +2,10 @@ import Foundation
 import LuxControlCore
 
 public actor PublicDisplayController: DisplayControlling {
-    private let discovery: CGDisplayDiscovery
+    private let discovery: any DisplayDiscovering
     private var states: [String: DisplayState] = [:]
 
-    public init(discovery: CGDisplayDiscovery = CGDisplayDiscovery()) {
+    public init(discovery: any DisplayDiscovering = CGDisplayDiscovery()) {
         self.discovery = discovery
     }
 
@@ -14,7 +14,7 @@ public actor PublicDisplayController: DisplayControlling {
     }
 
     public func readState(for display: DisplayID) async -> DisplayState {
-        let key = key(for: display)
+        let key = await stateKey(for: display)
         return states[key] ?? DisplayState(brightness: BrightnessValue(percent: 50), boostEnabled: false)
     }
 
@@ -27,7 +27,7 @@ public actor PublicDisplayController: DisplayControlling {
             throw DisplayControlError.unsupported(target.supportLevel)
         }
 
-        let key = key(for: display)
+        let key = target.stableKey
         let previous = states[key] ?? DisplayState(brightness: BrightnessValue(percent: 50), boostEnabled: false)
         states[key] = DisplayState(brightness: value, boostEnabled: previous.boostEnabled)
     }
@@ -41,12 +41,21 @@ public actor PublicDisplayController: DisplayControlling {
             throw DisplayControlError.unsupported(target.supportLevel)
         }
 
-        let key = key(for: display)
+        let key = target.stableKey
         let previous = states[key] ?? DisplayState(brightness: BrightnessValue(percent: 50), boostEnabled: false)
         states[key] = DisplayState(brightness: previous.brightness, boostEnabled: enabled)
     }
 
-    private func key(for display: DisplayID) -> String {
+    private func stateKey(for display: DisplayID) async -> String {
+        let displays = await discover()
+        guard let target = displays.first(where: { $0.id == display }) else {
+            return fallbackKey(for: display)
+        }
+
+        return target.stableKey
+    }
+
+    private func fallbackKey(for display: DisplayID) -> String {
         switch display {
         case .directDisplayID(let id):
             return "cg-\(id)"

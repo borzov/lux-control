@@ -2,7 +2,11 @@ import CoreGraphics
 import Foundation
 import LuxControlCore
 
-public struct CGDisplayDiscovery: Sendable {
+public protocol DisplayDiscovering: Sendable {
+    func discover() async -> [Display]
+}
+
+public struct CGDisplayDiscovery: DisplayDiscovering {
     public init() {}
 
     public func discover() async -> [Display] {
