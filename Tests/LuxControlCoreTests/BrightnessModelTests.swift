@@ -246,6 +246,54 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == nil)
     }
 
+    @Test("older successful brightness write does not overwrite newer successful brightness state")
+    func olderSuccessfulBrightnessWriteDoesNotOverwriteNewerSuccessfulBrightnessState() async throws {
+        let full = display(id: 18, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let writeGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            await controller.clearOnSetBrightness()
+            await writeGate.suspend()
+        }
+
+        let olderWrite = Task {
+            try await model.setBrightness(.init(percent: 66))
+        }
+        await writeGate.waitUntilSuspended()
+        try await model.setBrightness(.init(percent: 77))
+        await writeGate.resume()
+        try await olderWrite.value
+
+        #expect(await model.snapshot.states["cg-18"]?.brightness == .init(percent: 77))
+        #expect(await model.snapshot.lastError == nil)
+    }
+
+    @Test("older successful boost write does not overwrite newer successful boost state")
+    func olderSuccessfulBoostWriteDoesNotOverwriteNewerSuccessfulBoostState() async throws {
+        let full = display(id: 19, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let writeGate = AsyncGate()
+        await controller.setOnSetBoost {
+            await controller.clearOnSetBoost()
+            await writeGate.suspend()
+        }
+
+        let olderWrite = Task {
+            try await model.setBoostEnabled(true)
+        }
+        await writeGate.waitUntilSuspended()
+        try await model.setBoostEnabled(false)
+        await writeGate.resume()
+        try await olderWrite.value
+
+        #expect(await model.snapshot.states["cg-19"]?.boostEnabled == false)
+        #expect(await model.snapshot.lastError == nil)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)
@@ -552,6 +600,14 @@ actor MockDisplayController: DisplayControlling {
 
     func setBoostError(_ error: any Error) {
         boostError = error
+    }
+
+    func setOnSetBoost(_ action: @escaping @Sendable () async -> Void) {
+        onSetBoost = action
+    }
+
+    func clearOnSetBoost() {
+        onSetBoost = nil
     }
 
     func setOnSetBrightness(_ action: @escaping @Sendable () async -> Void) {

@@ -23,6 +23,7 @@ public actor BrightnessModel {
     private var commandCompletionRevision = 0
     private var stateRevision = 0
     private var stateRevisions: [String: Int] = [:]
+    private var displayCommandCompletionRevisions: [String: Int] = [:]
     private var refreshGeneration = 0
 
     public private(set) var snapshot = BrightnessSnapshot()
@@ -65,6 +66,7 @@ public actor BrightnessModel {
         )
         let displayKeys = Set(displays.map(\.stableKey))
         stateRevisions = stateRevisions.filter { displayKeys.contains($0.key) }
+        displayCommandCompletionRevisions = displayCommandCompletionRevisions.filter { displayKeys.contains($0.key) }
     }
 
     public func selectDisplay(stableKey: String) {
@@ -76,6 +78,7 @@ public actor BrightnessModel {
         do {
             let display = try selectedDisplay()
             let stableKey = display.stableKey
+            let startingDisplayCommandCompletionRevision = displayCommandCompletionRevisions[stableKey] ?? 0
 
             guard display.supportLevel == .full || display.supportLevel == .brightnessOnly else {
                 throw DisplayControlError.unsupported(display.supportLevel)
@@ -88,7 +91,10 @@ public actor BrightnessModel {
             }
 
             clearLastErrorIfFresh(since: startingCommandCompletionRevision)
-            updateStateIfDisplayExists(stableKey: stableKey) { current in
+            updateStateIfDisplayCommandIsFresh(
+                stableKey: stableKey,
+                since: startingDisplayCommandCompletionRevision
+            ) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
         } catch {
@@ -101,6 +107,7 @@ public actor BrightnessModel {
         do {
             let display = try selectedDisplay()
             let stableKey = display.stableKey
+            let startingDisplayCommandCompletionRevision = displayCommandCompletionRevisions[stableKey] ?? 0
 
             guard display.supportLevel == .full else {
                 throw DisplayControlError.unsupported(display.supportLevel)
@@ -113,7 +120,10 @@ public actor BrightnessModel {
             }
 
             clearLastErrorIfFresh(since: startingCommandCompletionRevision)
-            updateStateIfDisplayExists(stableKey: stableKey) { current in
+            updateStateIfDisplayCommandIsFresh(
+                stableKey: stableKey,
+                since: startingDisplayCommandCompletionRevision
+            ) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
         } catch {
@@ -168,6 +178,19 @@ public actor BrightnessModel {
         snapshot.states[stableKey] = transform(current)
         stateRevision += 1
         stateRevisions[stableKey] = stateRevision
+    }
+
+    private func updateStateIfDisplayCommandIsFresh(
+        stableKey: String,
+        since startingDisplayCommandCompletionRevision: Int,
+        _ transform: (DisplayState) -> DisplayState
+    ) {
+        guard displayCommandCompletionRevisions[stableKey, default: 0] == startingDisplayCommandCompletionRevision else {
+            return
+        }
+
+        displayCommandCompletionRevisions[stableKey, default: 0] += 1
+        updateStateIfDisplayExists(stableKey: stableKey, transform)
     }
 
     private func recordFailure(_ error: any Error, startedAt startingCommandCompletionRevision: Int) -> DisplayControlError {
