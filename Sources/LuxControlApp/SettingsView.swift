@@ -11,7 +11,7 @@ struct SettingsView: View {
         diagnosticsView
         .frame(width: 560, height: 360)
         .task {
-            await refreshSnapshot()
+            await refreshDiagnostics()
         }
     }
 

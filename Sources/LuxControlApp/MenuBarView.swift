@@ -11,6 +11,10 @@ struct MenuBarView: View {
     @State private var brightness = 50.0
     @State private var boostEnabled = false
     @State private var isRefreshing = false
+    @State private var isMenuVisible = false
+    @State private var refreshTask: Task<Void, Never>?
+    @State private var selectTask: Task<Void, Never>?
+    @State private var boostWriteTask: Task<Void, Never>?
     @State private var brightnessWriteTask: Task<Void, Never>?
 
     var body: some View {
@@ -36,9 +40,7 @@ struct MenuBarView: View {
             }
 
             Button {
-                Task {
-                    await refreshDisplays()
-                }
+                startRefreshTask()
             } label: {
                 Label("Refresh Displays", systemImage: "arrow.clockwise")
             }
@@ -46,11 +48,13 @@ struct MenuBarView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(14)
-        .task {
-            await refreshDisplays()
+        .onAppear {
+            isMenuVisible = true
+            startRefreshTask()
         }
         .onDisappear {
-            cancelPendingWrites()
+            isMenuVisible = false
+            cancelPendingTasks()
         }
     }
 
@@ -62,7 +66,9 @@ struct MenuBarView: View {
             Spacer()
 
             Button {
+                NSApplication.shared.activate(ignoringOtherApps: true)
                 openSettings()
+                NSApplication.shared.activate(ignoringOtherApps: true)
             } label: {
                 Label("Settings", systemImage: "gearshape")
             }
@@ -138,8 +144,12 @@ struct MenuBarView: View {
             selectedStableKey
         } set: { stableKey in
             selectedStableKey = stableKey
-            Task {
+            selectTask?.cancel()
+            selectTask = Task {
                 await model.selectDisplay(stableKey: stableKey)
+                guard isTaskStillActive() else {
+                    return
+                }
                 await refreshSnapshot()
             }
         }
@@ -154,12 +164,16 @@ struct MenuBarView: View {
             }
 
             boostEnabled = enabled
-            Task {
+            boostWriteTask?.cancel()
+            boostWriteTask = Task {
                 await model.selectDisplay(stableKey: targetStableKey)
                 do {
                     try await model.setBoostEnabled(enabled)
                 } catch {
                     // BrightnessModel records command failures in snapshot.lastError.
+                }
+                guard isTaskStillActive() else {
+                    return
                 }
                 await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
                 await refreshSnapshot()
@@ -200,19 +214,64 @@ struct MenuBarView: View {
         boostEnabled = state.boostEnabled
     }
 
-    private func refreshDisplays() async {
-        await MainActor.run {
-            isRefreshing = true
+    private func startRefreshTask() {
+        guard refreshTask == nil else {
+            return
         }
+
+        refreshTask = Task {
+            await refreshDisplays()
+            await MainActor.run {
+                if isMenuVisible {
+                    refreshTask = nil
+                }
+            }
+        }
+    }
+
+    private func refreshDisplays() async {
+        let shouldRefresh = await MainActor.run {
+            guard !isRefreshing else {
+                return false
+            }
+            isRefreshing = true
+            return true
+        }
+        guard shouldRefresh else {
+            return
+        }
+
+        guard isTaskStillActive() else {
+            finishRefreshingIfVisible()
+            return
+        }
+
         await model.refreshDisplays()
+        guard isTaskStillActive() else {
+            finishRefreshingIfVisible()
+            return
+        }
         await refreshSnapshot()
-        await MainActor.run {
+        finishRefreshingIfVisible()
+    }
+
+    @MainActor
+    private func isTaskStillActive() -> Bool {
+        isMenuVisible && !Task.isCancelled
+    }
+
+    @MainActor
+    private func finishRefreshingIfVisible() {
+        if isMenuVisible {
             isRefreshing = false
         }
     }
 
     private func refreshSnapshot() async {
         let snapshot = await model.snapshot
+        guard isTaskStillActive() else {
+            return
+        }
         applySnapshot(snapshot)
     }
 
@@ -234,7 +293,7 @@ struct MenuBarView: View {
                 // BrightnessModel records command failures in snapshot.lastError.
             }
 
-            guard !Task.isCancelled else {
+            guard isTaskStillActive() else {
                 return
             }
             await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
@@ -277,9 +336,16 @@ struct MenuBarView: View {
         await model.selectDisplay(stableKey: desiredStableKey)
     }
 
-    private func cancelPendingWrites() {
+    private func cancelPendingTasks() {
+        refreshTask?.cancel()
+        selectTask?.cancel()
+        boostWriteTask?.cancel()
         brightnessWriteTask?.cancel()
+        refreshTask = nil
+        selectTask = nil
+        boostWriteTask = nil
         brightnessWriteTask = nil
+        isRefreshing = false
     }
 
     private func supportDescription(for display: Display?) -> String {
