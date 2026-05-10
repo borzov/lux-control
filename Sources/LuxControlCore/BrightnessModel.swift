@@ -47,27 +47,49 @@ public actor BrightnessModel {
     }
 
     public func setBrightness(_ value: BrightnessValue) async throws {
-        let display = try selectedDisplay()
+        do {
+            let display = try selectedDisplay()
+            let stableKey = display.stableKey
 
-        guard display.supportLevel == .full || display.supportLevel == .brightnessOnly else {
-            throw DisplayControlError.unsupported(display.supportLevel)
+            guard display.supportLevel == .full || display.supportLevel == .brightnessOnly else {
+                throw DisplayControlError.unsupported(display.supportLevel)
+            }
+
+            do {
+                try await controller.setBrightness(value, for: display.id)
+            } catch {
+                throw mapWriteError(error)
+            }
+
+            updateStateIfCurrentDisplay(stableKey: stableKey) { current in
+                .init(brightness: value, boostEnabled: current.boostEnabled)
+            }
+        } catch {
+            throw recordFailure(error)
         }
-
-        try await controller.setBrightness(value, for: display.id)
-        let current = snapshot.states[display.stableKey] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
-        snapshot.states[display.stableKey] = .init(brightness: value, boostEnabled: current.boostEnabled)
     }
 
     public func setBoostEnabled(_ enabled: Bool) async throws {
-        let display = try selectedDisplay()
+        do {
+            let display = try selectedDisplay()
+            let stableKey = display.stableKey
 
-        guard display.supportLevel == .full else {
-            throw DisplayControlError.unsupported(display.supportLevel)
+            guard display.supportLevel == .full else {
+                throw DisplayControlError.unsupported(display.supportLevel)
+            }
+
+            do {
+                try await controller.setBoostEnabled(enabled, for: display.id)
+            } catch {
+                throw mapWriteError(error)
+            }
+
+            updateStateIfCurrentDisplay(stableKey: stableKey) { current in
+                .init(brightness: current.brightness, boostEnabled: enabled)
+            }
+        } catch {
+            throw recordFailure(error)
         }
-
-        try await controller.setBoostEnabled(enabled, for: display.id)
-        let current = snapshot.states[display.stableKey] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
-        snapshot.states[display.stableKey] = .init(brightness: current.brightness, boostEnabled: enabled)
     }
 
     private func selectedDisplay() throws -> Display {
@@ -76,6 +98,35 @@ public actor BrightnessModel {
         }
 
         return display
+    }
+
+    private func updateStateIfCurrentDisplay(
+        stableKey: String,
+        _ transform: (DisplayState) -> DisplayState
+    ) {
+        guard snapshot.selectedDisplay?.stableKey == stableKey,
+              snapshot.displays.contains(where: { $0.stableKey == stableKey })
+        else {
+            return
+        }
+
+        let current = snapshot.states[stableKey] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
+        snapshot.states[stableKey] = transform(current)
+        snapshot.lastError = nil
+    }
+
+    private func recordFailure(_ error: any Error) -> DisplayControlError {
+        let controlError = mapWriteError(error)
+        snapshot.lastError = controlError.localizedDescription
+        return controlError
+    }
+
+    private func mapWriteError(_ error: any Error) -> DisplayControlError {
+        if let controlError = error as? DisplayControlError {
+            return controlError
+        }
+
+        return .writeFailed(error.localizedDescription)
     }
 }
 

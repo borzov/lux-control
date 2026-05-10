@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import LuxControlCore
 
@@ -54,6 +55,125 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.states["cg-21"]?.boostEnabled == false)
     }
 
+    @Test("setBrightness succeeds for brightnessOnly display")
+    func setBrightnessSucceedsForBrightnessOnlyDisplay() async throws {
+        let brightnessOnly = display(id: 31, name: "Brightness Only", supportLevel: .brightnessOnly)
+        let controller = MockDisplayController(displays: [brightnessOnly])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        try await model.setBrightness(.init(percent: 64))
+
+        #expect(await controller.setBrightnessCalls == [brightnessOnly.id])
+        #expect(await model.snapshot.states["cg-31"]?.brightness == .init(percent: 64))
+        #expect(await model.snapshot.lastError == nil)
+    }
+
+    @Test("setBoostEnabled succeeds for full display and updates snapshot state")
+    func setBoostEnabledSucceedsForFullDisplayAndUpdatesSnapshotState() async throws {
+        let full = display(id: 41, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        try await model.setBoostEnabled(true)
+
+        #expect(await controller.setBoostCalls == [full.id])
+        #expect(await model.snapshot.states["cg-41"]?.boostEnabled == true)
+        #expect(await model.snapshot.lastError == nil)
+    }
+
+    @Test("selectDisplay routes subsequent brightness command to selected display")
+    func selectDisplayRoutesSubsequentBrightnessCommandToSelectedDisplay() async throws {
+        let first = display(id: 51, name: "First", supportLevel: .full)
+        let second = display(id: 52, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        await model.selectDisplay(stableKey: second.stableKey)
+        try await model.setBrightness(.init(percent: 12))
+
+        #expect(await controller.setBrightnessCalls == [second.id])
+        #expect(await model.snapshot.states["cg-51"]?.brightness == .init(percent: 50))
+        #expect(await model.snapshot.states["cg-52"]?.brightness == .init(percent: 12))
+    }
+
+    @Test("setBrightness throws displayNotFound when no display is selected")
+    func setBrightnessThrowsDisplayNotFoundWhenNoDisplayIsSelected() async {
+        let controller = MockDisplayController(displays: [])
+        let model = BrightnessModel(controller: controller)
+
+        await #expect(throws: DisplayControlError.displayNotFound) {
+            try await model.setBrightness(.init(percent: 42))
+        }
+        #expect(await model.snapshot.lastError == DisplayControlError.displayNotFound.localizedDescription)
+    }
+
+    @Test("setBrightness throws unsupported for detectOnly display")
+    func setBrightnessThrowsUnsupportedForDetectOnlyDisplay() async {
+        let detectOnly = display(id: 61, name: "Detect Only", supportLevel: .detectOnly)
+        let controller = MockDisplayController(displays: [detectOnly])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        await model.selectDisplay(stableKey: detectOnly.stableKey)
+        await #expect(throws: DisplayControlError.unsupported(.detectOnly)) {
+            try await model.setBrightness(.init(percent: 42))
+        }
+        #expect(await controller.setBrightnessCalls.isEmpty)
+        #expect(await model.snapshot.lastError == DisplayControlError.unsupported(.detectOnly).localizedDescription)
+    }
+
+    @Test("controller write failure maps to writeFailed and updates lastError")
+    func controllerWriteFailureMapsToWriteFailedAndUpdatesLastError() async {
+        let full = display(id: 71, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        await controller.setBrightnessError(TestWriteError(message: "hardware denied"))
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        await #expect(throws: DisplayControlError.writeFailed("hardware denied")) {
+            try await model.setBrightness(.init(percent: 42))
+        }
+        #expect(await model.snapshot.states["cg-71"]?.brightness == .init(percent: 50))
+        #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("hardware denied").localizedDescription)
+    }
+
+    @Test("DisplayControlError from controller passes through unchanged")
+    func displayControlErrorFromControllerPassesThroughUnchanged() async {
+        let full = display(id: 81, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        await controller.setBoostError(DisplayControlError.writeFailed("ddc failed"))
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        await #expect(throws: DisplayControlError.writeFailed("ddc failed")) {
+            try await model.setBoostEnabled(true)
+        }
+        #expect(await model.snapshot.states["cg-81"]?.boostEnabled == false)
+        #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("ddc failed").localizedDescription)
+    }
+
+    @Test("setBrightness does not update stale snapshot after selection changes during write")
+    func setBrightnessDoesNotUpdateStaleSnapshotAfterSelectionChangesDuringWrite() async throws {
+        let first = display(id: 91, name: "First", supportLevel: .full)
+        let second = display(id: 92, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        await controller.setOnSetBrightness {
+            await model.selectDisplay(stableKey: second.stableKey)
+        }
+
+        try await model.setBrightness(.init(percent: 25))
+
+        #expect(await controller.setBrightnessCalls == [first.id])
+        #expect(await model.snapshot.selectedDisplay == second)
+        #expect(await model.snapshot.states["cg-91"]?.brightness == .init(percent: 50))
+        #expect(await model.snapshot.states["cg-92"]?.brightness == .init(percent: 50))
+    }
+
     private func display(id: UInt32, name: String, supportLevel: DisplaySupportLevel) -> Display {
         Display(
             id: .directDisplayID(id),
@@ -69,17 +189,29 @@ actor MockDisplayController: DisplayControlling {
     var states: [String: DisplayState]
     var setBrightnessCalls: [DisplayID]
     var setBoostCalls: [DisplayID]
+    var brightnessError: (any Error)?
+    var boostError: (any Error)?
+    var onSetBrightness: (@Sendable () async -> Void)?
+    var onSetBoost: (@Sendable () async -> Void)?
 
     init(
         displays: [Display],
         states: [String: DisplayState] = [:],
         setBrightnessCalls: [DisplayID] = [],
-        setBoostCalls: [DisplayID] = []
+        setBoostCalls: [DisplayID] = [],
+        brightnessError: (any Error)? = nil,
+        boostError: (any Error)? = nil,
+        onSetBrightness: (@Sendable () async -> Void)? = nil,
+        onSetBoost: (@Sendable () async -> Void)? = nil
     ) {
         self.displays = displays
         self.states = states
         self.setBrightnessCalls = setBrightnessCalls
         self.setBoostCalls = setBoostCalls
+        self.brightnessError = brightnessError
+        self.boostError = boostError
+        self.onSetBrightness = onSetBrightness
+        self.onSetBoost = onSetBoost
     }
 
     func discover() async -> [Display] {
@@ -92,6 +224,12 @@ actor MockDisplayController: DisplayControlling {
 
     func setBrightness(_ value: BrightnessValue, for display: DisplayID) async throws {
         setBrightnessCalls.append(display)
+        if let onSetBrightness {
+            await onSetBrightness()
+        }
+        if let brightnessError {
+            throw brightnessError
+        }
         let key = stableKey(for: display)
         let current = states[key] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
         states[key] = .init(brightness: value, boostEnabled: current.boostEnabled)
@@ -99,6 +237,12 @@ actor MockDisplayController: DisplayControlling {
 
     func setBoostEnabled(_ enabled: Bool, for display: DisplayID) async throws {
         setBoostCalls.append(display)
+        if let onSetBoost {
+            await onSetBoost()
+        }
+        if let boostError {
+            throw boostError
+        }
         let key = stableKey(for: display)
         let current = states[key] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
         states[key] = .init(brightness: current.brightness, boostEnabled: enabled)
@@ -112,10 +256,30 @@ actor MockDisplayController: DisplayControlling {
         states[stableKey(for: display)] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
     }
 
+    func setBrightnessError(_ error: any Error) {
+        brightnessError = error
+    }
+
+    func setBoostError(_ error: any Error) {
+        boostError = error
+    }
+
+    func setOnSetBrightness(_ action: @escaping @Sendable () async -> Void) {
+        onSetBrightness = action
+    }
+
     private func stableKey(for display: DisplayID) -> String {
         switch display {
         case .directDisplayID(let displayID):
             return "cg-\(displayID)"
         }
+    }
+}
+
+private struct TestWriteError: Error, LocalizedError, Sendable {
+    let message: String
+
+    var errorDescription: String? {
+        message
     }
 }
