@@ -29,6 +29,24 @@ There is no new workflow to learn. Use the menu bar icon, adjust brightness when
 
 Display support depends on the Mac, the display, and the current macOS display mode. If LuxControl cannot safely boost a display, it will say so instead of pretending that Boost is available.
 
+## Compatibility
+
+LuxControl requires macOS 14 Sonoma or newer. Release builds are checked on the three latest macOS generations available in GitHub Actions: macOS 26 Tahoe, macOS 15 Sequoia, and macOS 14 Sonoma.
+
+## Install
+
+Download the release zip, move `LuxControl.app` to `/Applications`, and open it from there.
+
+The initial releases are not signed with an Apple Developer ID certificate. If macOS blocks the app after download, remove the quarantine attribute explicitly:
+
+```bash
+sudo xattr -cr /Applications/LuxControl.app
+```
+
 ## Releases
 
 Release builds are produced by GitHub Actions. See [docs/release-policy.md](docs/release-policy.md) for the versioning and release flow.
+
+## Development
+
+Diagnostics are hidden in normal builds. To include the diagnostics section while working locally, build with `-Xswiftc -DDEVELOPMENT_DIAGNOSTICS`.

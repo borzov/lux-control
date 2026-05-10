@@ -15,9 +15,57 @@ permissions:
   contents: write
 
 jobs:
+  compatibility:
+    name: Compatibility (${{ matrix.macos }})
+    runs-on: ${{ matrix.macos }}
+    strategy:
+      fail-fast: false
+      matrix:
+        macos:
+          - macos-26
+          - macos-15
+          - macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+      - name: Package app
+        run: scripts/package-app.sh "${{ steps.version.outputs.version }}" "${{ github.run_number }}"
+
+      - name: Smoke launch app bundle
+        shell: bash
+        run: |
+          app_process="LuxControl.app/Contents/MacOS/LuxControl"
+          open -n dist/LuxControl.app
+          sleep 5
+          if ! pgrep -f "$app_process" >/dev/null; then
+            echo "LuxControl.app did not stay running after LaunchServices launch"
+            exit 1
+          fi
+          pkill -f "$app_process" || true
+
   build:
     name: Build Release App
-    runs-on: macos-latest
+    runs-on: macos-15
+    needs: compatibility
 
     steps:
       - name: Check out repository
@@ -59,4 +107,3 @@ jobs:
             dist/LuxControl-${{ steps.version.outputs.version }}.zip
             dist/LuxControl-${{ steps.version.outputs.version }}.zip.sha256
           generate_release_notes: true
-

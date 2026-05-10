@@ -8,8 +8,15 @@ on:
 
 jobs:
   test:
-    name: Build and Test
-    runs-on: macos-latest
+    name: Build and Test (${{ matrix.macos }})
+    runs-on: ${{ matrix.macos }}
+    strategy:
+      fail-fast: false
+      matrix:
+        macos:
+          - macos-26
+          - macos-15
+          - macos-14
 
     steps:
       - name: Check out repository
@@ -23,4 +30,3 @@ jobs:
 
       - name: Run tests
         run: swift test
-

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-0.1.0}"
+version="${1:-0.1.1}"
 build_number="${2:-1}"
 configuration="${CONFIGURATION:-release}"
 
@@ -10,17 +10,20 @@ dist_dir="$repo_root/dist"
 app_dir="$dist_dir/LuxControl.app"
 contents_dir="$app_dir/Contents"
 macos_dir="$contents_dir/MacOS"
+resources_dir="$contents_dir/Resources"
 executable="$repo_root/.build/$configuration/LuxControlApp"
+icon_file="$repo_root/Sources/LuxControlApp/Resources/AppIcon.icns"
 
 cd "$repo_root"
 
 swift build -c "$configuration" --product LuxControlApp
 
 rm -rf "$app_dir"
-mkdir -p "$macos_dir"
+mkdir -p "$macos_dir" "$resources_dir"
 
 cp "$executable" "$macos_dir/LuxControl"
 chmod 755 "$macos_dir/LuxControl"
+cp "$icon_file" "$resources_dir/AppIcon.icns"
 
 cat > "$contents_dir/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -35,6 +38,8 @@ cat > "$contents_dir/Info.plist" <<PLIST
     <string>ru.borzov.lux-control</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>LuxControl</string>
     <key>CFBundlePackageType</key>

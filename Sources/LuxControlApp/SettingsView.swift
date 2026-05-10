@@ -6,30 +6,46 @@ struct SettingsView: View {
     let model: BrightnessModel
 
     @AppStorage("launchBoostEnabled") private var launchBoostEnabled = false
+    #if DEVELOPMENT_DIAGNOSTICS
     @State private var snapshot = BrightnessSnapshot()
     @State private var isRefreshing = false
+    @State private var refreshTask: Task<Void, Never>?
+    #endif
     @State private var launchAtLoginEnabled = LaunchAtLoginService().isEnabled
     @State private var settingsError: String?
-    @State private var refreshTask: Task<Void, Never>?
 
     private let launchAtLoginService = LaunchAtLoginService()
+
+    static var includesDiagnostics: Bool {
+        #if DEVELOPMENT_DIAGNOSTICS
+        true
+        #else
+        false
+        #endif
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             generalSettings
             appInfo
+            #if DEVELOPMENT_DIAGNOSTICS
             Divider()
             diagnosticsView
+            #endif
         }
         .padding(20)
-        .frame(width: 560, height: 440)
+        .frame(width: 560, height: Self.includesDiagnostics ? 440 : 230)
         .onAppear {
             launchAtLoginEnabled = launchAtLoginService.isEnabled
+            #if DEVELOPMENT_DIAGNOSTICS
             startRefreshTask()
+            #endif
         }
+        #if DEVELOPMENT_DIAGNOSTICS
         .onDisappear {
             cancelRefreshTask()
         }
+        #endif
     }
 
     private var generalSettings: some View {
@@ -79,6 +95,25 @@ struct SettingsView: View {
         }
     }
 
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding {
+            launchAtLoginEnabled
+        } set: { enabled in
+            do {
+                try launchAtLoginService.setEnabled(enabled)
+                launchAtLoginEnabled = launchAtLoginService.isEnabled
+                if !launchAtLoginEnabled {
+                    launchBoostEnabled = false
+                }
+                settingsError = nil
+            } catch {
+                launchAtLoginEnabled = launchAtLoginService.isEnabled
+                settingsError = error.localizedDescription
+            }
+        }
+    }
+
+    #if DEVELOPMENT_DIAGNOSTICS
     private var diagnosticsView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -105,24 +140,6 @@ struct SettingsView: View {
         }
     }
 
-    private var launchAtLoginBinding: Binding<Bool> {
-        Binding {
-            launchAtLoginEnabled
-        } set: { enabled in
-            do {
-                try launchAtLoginService.setEnabled(enabled)
-                launchAtLoginEnabled = launchAtLoginService.isEnabled
-                if !launchAtLoginEnabled {
-                    launchBoostEnabled = false
-                }
-                settingsError = nil
-            } catch {
-                launchAtLoginEnabled = launchAtLoginService.isEnabled
-                settingsError = error.localizedDescription
-            }
-        }
-    }
-
     private var diagnosticsText: String {
         let report = DiagnosticsReport.make(
             appVersion: appVersion,
@@ -137,11 +154,13 @@ struct SettingsView: View {
 
         return "\(report)\nLast error: \(lastError)"
     }
+    #endif
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.1"
     }
 
+    #if DEVELOPMENT_DIAGNOSTICS
     private func startRefreshTask() {
         guard refreshTask == nil else {
             return
@@ -207,4 +226,5 @@ struct SettingsView: View {
         refreshTask = nil
         isRefreshing = false
     }
+    #endif
 }

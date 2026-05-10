@@ -2,6 +2,19 @@
 
 All notable changes to LuxControl are documented here.
 
+## 0.1.1 - 2026-05-10
+
+### Added
+
+- App icon for the macOS bundle.
+- GitHub Actions compatibility checks for macOS 26 Tahoe, macOS 15 Sequoia, and macOS 14 Sonoma.
+- README compatibility and quarantine-removal installation guidance.
+
+### Changed
+
+- Repository URL changed to `https://github.com/borzov/lux-control`.
+- Diagnostics settings are now hidden from release-compatible builds and only compile in when `DEVELOPMENT_DIAGNOSTICS` is enabled.
+
 ## 0.1.0 - 2026-05-10
 
 Initial release candidate.

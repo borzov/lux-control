@@ -29,6 +29,9 @@ let package = Package(
         .executableTarget(
             name: "LuxControlApp",
             dependencies: ["LuxControlCore", "LuxControlMac"],
+            resources: [
+                .copy("Resources"),
+            ],
             linkerSettings: [
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("AppKit"),
@@ -41,6 +44,10 @@ let package = Package(
         .testTarget(
             name: "LuxControlMacTests",
             dependencies: ["LuxControlMac", "LuxControlCore"]
+        ),
+        .testTarget(
+            name: "LuxControlAppTests",
+            dependencies: ["LuxControlApp"]
         ),
     ]
 )
