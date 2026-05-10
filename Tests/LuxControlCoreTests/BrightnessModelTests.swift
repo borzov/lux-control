@@ -80,6 +80,32 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == nil)
     }
 
+    @Test("refreshDisplays preserves newer write error recorded while refresh is in flight")
+    func refreshDisplaysPreservesNewerWriteErrorRecordedWhileRefreshIsInFlight() async {
+        let full = display(id: 9, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        await controller.setBrightnessError(TestWriteError(message: "write failed during refresh"))
+        let refreshGate = AsyncGate()
+        await controller.setOnDiscover {
+            await refreshGate.suspend()
+        }
+
+        let refreshTask = Task {
+            await model.refreshDisplays()
+        }
+        await refreshGate.waitUntilSuspended()
+
+        await #expect(throws: DisplayControlError.writeFailed("write failed during refresh")) {
+            try await model.setBrightness(.init(percent: 42))
+        }
+        await refreshGate.resume()
+        await refreshTask.value
+
+        #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("write failed during refresh").localizedDescription)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)

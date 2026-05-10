@@ -19,6 +19,7 @@ public struct BrightnessSnapshot: Equatable, Sendable {
 
 public actor BrightnessModel {
     private let controller: DisplayControlling
+    private var errorRevision = 0
 
     public private(set) var snapshot = BrightnessSnapshot()
 
@@ -27,6 +28,7 @@ public actor BrightnessModel {
     }
 
     public func refreshDisplays() async {
+        let startingErrorRevision = errorRevision
         let displays = await controller.discover()
         var states: [String: DisplayState] = [:]
 
@@ -35,11 +37,15 @@ public actor BrightnessModel {
         }
 
         let selectedStableKey = snapshot.selectedDisplay?.stableKey
+        let lastError = errorRevision == startingErrorRevision ? nil : snapshot.lastError
+        if errorRevision == startingErrorRevision {
+            errorRevision += 1
+        }
         snapshot = BrightnessSnapshot(
             displays: displays,
             selectedDisplay: selectedDisplay(in: displays, preserving: selectedStableKey),
             states: states,
-            lastError: nil
+            lastError: lastError
         )
     }
 
@@ -62,7 +68,7 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            snapshot.lastError = nil
+            clearLastError()
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
@@ -86,7 +92,7 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            snapshot.lastError = nil
+            clearLastError()
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
@@ -126,8 +132,14 @@ public actor BrightnessModel {
 
     private func recordFailure(_ error: any Error) -> DisplayControlError {
         let controlError = normalizedControlError(error)
+        errorRevision += 1
         snapshot.lastError = controlError.localizedDescription
         return controlError
+    }
+
+    private func clearLastError() {
+        errorRevision += 1
+        snapshot.lastError = nil
     }
 
     private func normalizedControlError(_ error: any Error) -> DisplayControlError {
