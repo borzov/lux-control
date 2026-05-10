@@ -131,7 +131,7 @@ struct BrightnessModelTests {
         await writeGate.resume()
         try await olderWrite.value
 
-        #expect(await model.snapshot.states["cg-10"]?.brightness == .init(percent: 66))
+        #expect(await model.snapshot.states["cg-10"]?.brightness == .init(percent: 50))
         #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("newer write failed").localizedDescription)
     }
 
@@ -270,6 +270,88 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == nil)
     }
 
+    @Test("newer brightness write updates final state after older brightness completes first")
+    func newerBrightnessWriteUpdatesFinalStateAfterOlderBrightnessCompletesFirst() async throws {
+        let full = display(id: 20, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let olderGate = AsyncGate()
+        let newerGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            switch await controller.setBrightnessCalls.count {
+            case 1:
+                await olderGate.suspend()
+            case 2:
+                await newerGate.suspend()
+            default:
+                break
+            }
+        }
+
+        let olderWrite = Task {
+            try await model.setBrightness(.init(percent: 66))
+        }
+        await olderGate.waitUntilSuspended()
+        let newerWrite = Task {
+            try await model.setBrightness(.init(percent: 77))
+        }
+        await newerGate.waitUntilSuspended()
+
+        await olderGate.resume()
+        try await olderWrite.value
+        #expect(await model.snapshot.states["cg-20"]?.brightness == .init(percent: 50))
+
+        await newerGate.resume()
+        try await newerWrite.value
+
+        #expect(await model.snapshot.states["cg-20"]?.brightness == .init(percent: 77))
+        #expect(await model.snapshot.lastError == nil)
+    }
+
+    @Test("older brightness success does not suppress newer brightness failure")
+    func olderBrightnessSuccessDoesNotSuppressNewerBrightnessFailure() async throws {
+        let full = display(id: 23, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let olderGate = AsyncGate()
+        let newerGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            switch await controller.setBrightnessCalls.count {
+            case 1:
+                await olderGate.suspend()
+            case 2:
+                await newerGate.suspend()
+            default:
+                break
+            }
+        }
+
+        let olderWrite = Task {
+            try await model.setBrightness(.init(percent: 66))
+        }
+        await olderGate.waitUntilSuspended()
+        let newerWrite = Task {
+            do {
+                try await model.setBrightness(.init(percent: 77))
+                Issue.record("Newer write should fail")
+            } catch {
+                #expect(error as? DisplayControlError == .writeFailed("newer write failed"))
+            }
+        }
+        await newerGate.waitUntilSuspended()
+
+        await olderGate.resume()
+        try await olderWrite.value
+        await controller.setBrightnessError(TestWriteError(message: "newer write failed"))
+        await newerGate.resume()
+        await newerWrite.value
+
+        #expect(await model.snapshot.states["cg-23"]?.brightness == .init(percent: 50))
+        #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("newer write failed").localizedDescription)
+    }
+
     @Test("older successful boost write does not overwrite newer successful boost state")
     func olderSuccessfulBoostWriteDoesNotOverwriteNewerSuccessfulBoostState() async throws {
         let full = display(id: 19, name: "Full", supportLevel: .full)
@@ -291,6 +373,39 @@ struct BrightnessModelTests {
         try await olderWrite.value
 
         #expect(await model.snapshot.states["cg-19"]?.boostEnabled == false)
+        #expect(await model.snapshot.lastError == nil)
+    }
+
+    @Test("concurrent brightness and boost writes update independent fields")
+    func concurrentBrightnessAndBoostWritesUpdateIndependentFields() async throws {
+        let full = display(id: 24, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let brightnessGate = AsyncGate()
+        let boostGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            await brightnessGate.suspend()
+        }
+        await controller.setOnSetBoost {
+            await boostGate.suspend()
+        }
+
+        let brightnessWrite = Task {
+            try await model.setBrightness(.init(percent: 82))
+        }
+        await brightnessGate.waitUntilSuspended()
+        let boostWrite = Task {
+            try await model.setBoostEnabled(true)
+        }
+        await boostGate.waitUntilSuspended()
+
+        await brightnessGate.resume()
+        try await brightnessWrite.value
+        await boostGate.resume()
+        try await boostWrite.value
+
+        #expect(await model.snapshot.states["cg-24"] == .init(brightness: .init(percent: 82), boostEnabled: true))
         #expect(await model.snapshot.lastError == nil)
     }
 

@@ -20,10 +20,10 @@ public struct BrightnessSnapshot: Equatable, Sendable {
 public actor BrightnessModel {
     private let controller: DisplayControlling
     private var errorRevision = 0
-    private var commandCompletionRevision = 0
+    private var nextCommandRevision: UInt64 = 0
+    private var commandStartRevisions: [CommandKey: UInt64] = [:]
     private var stateRevision = 0
     private var stateRevisions: [String: Int] = [:]
-    private var displayCommandCompletionRevisions: [String: Int] = [:]
     private var refreshGeneration = 0
 
     public private(set) var snapshot = BrightnessSnapshot()
@@ -66,7 +66,7 @@ public actor BrightnessModel {
         )
         let displayKeys = Set(displays.map(\.stableKey))
         stateRevisions = stateRevisions.filter { displayKeys.contains($0.key) }
-        displayCommandCompletionRevisions = displayCommandCompletionRevisions.filter { displayKeys.contains($0.key) }
+        commandStartRevisions = commandStartRevisions.filter { displayKeys.contains($0.key.stableKey) }
     }
 
     public func selectDisplay(stableKey: String) {
@@ -74,12 +74,17 @@ public actor BrightnessModel {
     }
 
     public func setBrightness(_ value: BrightnessValue) async throws {
-        let startingCommandCompletionRevision = commandCompletionRevision
+        let display: Display
         do {
-            let display = try selectedDisplay()
-            let stableKey = display.stableKey
-            let startingDisplayCommandCompletionRevision = displayCommandCompletionRevisions[stableKey] ?? 0
+            display = try selectedDisplay()
+        } catch {
+            throw recordUnscopedFailure(error)
+        }
+        let stableKey = display.stableKey
+        let commandKey = CommandKey(stableKey: stableKey, kind: .brightness)
+        let commandRevision = startCommand(commandKey)
 
+        do {
             guard display.supportLevel == .full || display.supportLevel == .brightnessOnly else {
                 throw DisplayControlError.unsupported(display.supportLevel)
             }
@@ -90,25 +95,26 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            clearLastErrorIfFresh(since: startingCommandCompletionRevision)
-            updateStateIfDisplayCommandIsFresh(
-                stableKey: stableKey,
-                since: startingDisplayCommandCompletionRevision
-            ) { current in
+            completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
         } catch {
-            throw recordFailure(error, startedAt: startingCommandCompletionRevision)
+            throw recordFailure(error, for: commandKey, revision: commandRevision)
         }
     }
 
     public func setBoostEnabled(_ enabled: Bool) async throws {
-        let startingCommandCompletionRevision = commandCompletionRevision
+        let display: Display
         do {
-            let display = try selectedDisplay()
-            let stableKey = display.stableKey
-            let startingDisplayCommandCompletionRevision = displayCommandCompletionRevisions[stableKey] ?? 0
+            display = try selectedDisplay()
+        } catch {
+            throw recordUnscopedFailure(error)
+        }
+        let stableKey = display.stableKey
+        let commandKey = CommandKey(stableKey: stableKey, kind: .boost)
+        let commandRevision = startCommand(commandKey)
 
+        do {
             guard display.supportLevel == .full else {
                 throw DisplayControlError.unsupported(display.supportLevel)
             }
@@ -119,15 +125,11 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            clearLastErrorIfFresh(since: startingCommandCompletionRevision)
-            updateStateIfDisplayCommandIsFresh(
-                stableKey: stableKey,
-                since: startingDisplayCommandCompletionRevision
-            ) { current in
+            completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
         } catch {
-            throw recordFailure(error, startedAt: startingCommandCompletionRevision)
+            throw recordFailure(error, for: commandKey, revision: commandRevision)
         }
     }
 
@@ -180,39 +182,46 @@ public actor BrightnessModel {
         stateRevisions[stableKey] = stateRevision
     }
 
-    private func updateStateIfDisplayCommandIsFresh(
-        stableKey: String,
-        since startingDisplayCommandCompletionRevision: Int,
+    private func startCommand(_ commandKey: CommandKey) -> UInt64 {
+        nextCommandRevision += 1
+        commandStartRevisions[commandKey] = nextCommandRevision
+        return nextCommandRevision
+    }
+
+    private func isLatestCommand(_ commandKey: CommandKey, revision: UInt64) -> Bool {
+        commandStartRevisions[commandKey] == revision
+    }
+
+    private func completeSuccessfulCommand(
+        _ commandKey: CommandKey,
+        revision: UInt64,
         _ transform: (DisplayState) -> DisplayState
     ) {
-        guard displayCommandCompletionRevisions[stableKey, default: 0] == startingDisplayCommandCompletionRevision else {
+        guard isLatestCommand(commandKey, revision: revision) else {
             return
         }
 
-        displayCommandCompletionRevisions[stableKey, default: 0] += 1
-        updateStateIfDisplayExists(stableKey: stableKey, transform)
+        errorRevision += 1
+        snapshot.lastError = nil
+        updateStateIfDisplayExists(stableKey: commandKey.stableKey, transform)
     }
 
-    private func recordFailure(_ error: any Error, startedAt startingCommandCompletionRevision: Int) -> DisplayControlError {
+    private func recordFailure(_ error: any Error, for commandKey: CommandKey, revision: UInt64) -> DisplayControlError {
         let controlError = normalizedControlError(error)
-        guard commandCompletionRevision == startingCommandCompletionRevision else {
+        guard isLatestCommand(commandKey, revision: revision) else {
             return controlError
         }
 
-        commandCompletionRevision += 1
         errorRevision += 1
         snapshot.lastError = controlError.localizedDescription
         return controlError
     }
 
-    private func clearLastErrorIfFresh(since startingCommandCompletionRevision: Int) {
-        guard commandCompletionRevision == startingCommandCompletionRevision else {
-            return
-        }
-
-        commandCompletionRevision += 1
+    private func recordUnscopedFailure(_ error: any Error) -> DisplayControlError {
+        let controlError = normalizedControlError(error)
         errorRevision += 1
-        snapshot.lastError = nil
+        snapshot.lastError = controlError.localizedDescription
+        return controlError
     }
 
     private func normalizedControlError(_ error: any Error) -> DisplayControlError {
@@ -222,6 +231,16 @@ public actor BrightnessModel {
 
         return .writeFailed(error.localizedDescription)
     }
+}
+
+private enum ControlKind: Hashable {
+    case brightness
+    case boost
+}
+
+private struct CommandKey: Hashable {
+    let stableKey: String
+    let kind: ControlKind
 }
 
 private extension Display {
