@@ -158,6 +158,66 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.states["cg-13"]?.brightness == .init(percent: 88))
     }
 
+    @Test("refreshDisplays keeps fresh read state for displays without newer local writes")
+    func refreshDisplaysKeepsFreshReadStateForDisplaysWithoutNewerLocalWrites() async throws {
+        let first = display(id: 14, name: "First", supportLevel: .full)
+        let second = display(id: 15, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        await controller.clearReadStateCalls()
+        await controller.setStoredState(.init(brightness: .init(percent: 61), boostEnabled: false), for: first.id)
+        await controller.setStoredState(.init(brightness: .init(percent: 72), boostEnabled: false), for: second.id)
+        let readGate = AsyncGate()
+        await controller.setOnReadState {
+            if await controller.readStateCalls.count == 2 {
+                await controller.clearOnReadState()
+                await readGate.suspend()
+            }
+        }
+
+        let refreshTask = Task {
+            await model.refreshDisplays()
+        }
+        await readGate.waitUntilSuspended()
+        try await model.setBrightness(.init(percent: 88))
+        await readGate.resume()
+        await refreshTask.value
+
+        #expect(await model.snapshot.states["cg-14"]?.brightness == .init(percent: 88))
+        #expect(await model.snapshot.states["cg-15"]?.brightness == .init(percent: 72))
+    }
+
+    @Test("older failed brightness write does not overwrite newer successful write error state")
+    func olderFailedBrightnessWriteDoesNotOverwriteNewerSuccessfulWriteErrorState() async throws {
+        let full = display(id: 16, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let writeGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            await controller.clearOnSetBrightness()
+            await writeGate.suspend()
+        }
+
+        let olderWrite = Task {
+            do {
+                try await model.setBrightness(.init(percent: 66))
+                Issue.record("Older write should fail")
+            } catch {
+                #expect(error as? DisplayControlError == .writeFailed("older write failed"))
+            }
+        }
+        await writeGate.waitUntilSuspended()
+        try await model.setBrightness(.init(percent: 77))
+        await controller.setBrightnessError(TestWriteError(message: "older write failed"))
+        await writeGate.resume()
+        await olderWrite.value
+
+        #expect(await model.snapshot.states["cg-16"]?.brightness == .init(percent: 77))
+        #expect(await model.snapshot.lastError == nil)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)
@@ -360,6 +420,7 @@ struct BrightnessModelTests {
 actor MockDisplayController: DisplayControlling {
     var displays: [Display]
     var states: [String: DisplayState]
+    var readStateCalls: [DisplayID]
     var setBrightnessCalls: [DisplayID]
     var setBoostCalls: [DisplayID]
     var brightnessError: (any Error)?
@@ -372,6 +433,7 @@ actor MockDisplayController: DisplayControlling {
     init(
         displays: [Display],
         states: [String: DisplayState] = [:],
+        readStateCalls: [DisplayID] = [],
         setBrightnessCalls: [DisplayID] = [],
         setBoostCalls: [DisplayID] = [],
         brightnessError: (any Error)? = nil,
@@ -383,6 +445,7 @@ actor MockDisplayController: DisplayControlling {
     ) {
         self.displays = displays
         self.states = states
+        self.readStateCalls = readStateCalls
         self.setBrightnessCalls = setBrightnessCalls
         self.setBoostCalls = setBoostCalls
         self.brightnessError = brightnessError
@@ -401,6 +464,7 @@ actor MockDisplayController: DisplayControlling {
     }
 
     func readState(for display: DisplayID) async -> DisplayState {
+        readStateCalls.append(display)
         let state = states[stableKey(for: display)] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
         if let onReadState {
             await onReadState()
@@ -436,6 +500,10 @@ actor MockDisplayController: DisplayControlling {
 
     func setStoredState(_ state: DisplayState, for display: DisplayID) {
         states[stableKey(for: display)] = state
+    }
+
+    func clearReadStateCalls() {
+        readStateCalls = []
     }
 
     func setDisplays(_ displays: [Display]) {

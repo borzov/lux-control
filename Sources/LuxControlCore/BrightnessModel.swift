@@ -20,7 +20,9 @@ public struct BrightnessSnapshot: Equatable, Sendable {
 public actor BrightnessModel {
     private let controller: DisplayControlling
     private var errorRevision = 0
+    private var commandCompletionRevision = 0
     private var stateRevision = 0
+    private var stateRevisions: [String: Int] = [:]
 
     public private(set) var snapshot = BrightnessSnapshot()
 
@@ -30,7 +32,7 @@ public actor BrightnessModel {
 
     public func refreshDisplays() async {
         let startingErrorRevision = errorRevision
-        let startingStateRevision = stateRevision
+        let startingStateRevisions = stateRevisions
         let displays = await controller.discover()
         var refreshedStates: [String: DisplayState] = [:]
 
@@ -46,7 +48,7 @@ public actor BrightnessModel {
         let states = mergedStates(
             refreshedStates,
             for: displays,
-            startingStateRevision: startingStateRevision
+            startingStateRevisions: startingStateRevisions
         )
         snapshot = BrightnessSnapshot(
             displays: displays,
@@ -54,6 +56,8 @@ public actor BrightnessModel {
             states: states,
             lastError: lastError
         )
+        let displayKeys = Set(displays.map(\.stableKey))
+        stateRevisions = stateRevisions.filter { displayKeys.contains($0.key) }
     }
 
     public func selectDisplay(stableKey: String) {
@@ -61,8 +65,8 @@ public actor BrightnessModel {
     }
 
     public func setBrightness(_ value: BrightnessValue) async throws {
+        let startingCommandCompletionRevision = commandCompletionRevision
         do {
-            let startingErrorRevision = errorRevision
             let display = try selectedDisplay()
             let stableKey = display.stableKey
 
@@ -76,18 +80,18 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            clearLastErrorIfUnchanged(since: startingErrorRevision)
+            clearLastErrorIfFresh(since: startingCommandCompletionRevision)
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
         } catch {
-            throw recordFailure(error)
+            throw recordFailure(error, startedAt: startingCommandCompletionRevision)
         }
     }
 
     public func setBoostEnabled(_ enabled: Bool) async throws {
+        let startingCommandCompletionRevision = commandCompletionRevision
         do {
-            let startingErrorRevision = errorRevision
             let display = try selectedDisplay()
             let stableKey = display.stableKey
 
@@ -101,12 +105,12 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            clearLastErrorIfUnchanged(since: startingErrorRevision)
+            clearLastErrorIfFresh(since: startingCommandCompletionRevision)
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
         } catch {
-            throw recordFailure(error)
+            throw recordFailure(error, startedAt: startingCommandCompletionRevision)
         }
     }
 
@@ -130,16 +134,17 @@ public actor BrightnessModel {
     private func mergedStates(
         _ refreshedStates: [String: DisplayState],
         for displays: [Display],
-        startingStateRevision: Int
+        startingStateRevisions: [String: Int]
     ) -> [String: DisplayState] {
-        guard stateRevision != startingStateRevision else {
-            return refreshedStates
-        }
-
-        let refreshedKeys = Set(displays.map(\.stableKey))
         var states = refreshedStates
-        for (stableKey, state) in snapshot.states where refreshedKeys.contains(stableKey) {
-            states[stableKey] = state
+        for display in displays {
+            let stableKey = display.stableKey
+            let startingRevision = startingStateRevisions[stableKey] ?? 0
+            let currentRevision = stateRevisions[stableKey] ?? 0
+            if currentRevision > startingRevision,
+               let currentState = snapshot.states[stableKey] {
+                states[stableKey] = currentState
+            }
         }
         return states
     }
@@ -155,20 +160,27 @@ public actor BrightnessModel {
         let current = snapshot.states[stableKey] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
         snapshot.states[stableKey] = transform(current)
         stateRevision += 1
+        stateRevisions[stableKey] = stateRevision
     }
 
-    private func recordFailure(_ error: any Error) -> DisplayControlError {
+    private func recordFailure(_ error: any Error, startedAt startingCommandCompletionRevision: Int) -> DisplayControlError {
         let controlError = normalizedControlError(error)
+        guard commandCompletionRevision == startingCommandCompletionRevision else {
+            return controlError
+        }
+
+        commandCompletionRevision += 1
         errorRevision += 1
         snapshot.lastError = controlError.localizedDescription
         return controlError
     }
 
-    private func clearLastErrorIfUnchanged(since startingErrorRevision: Int) {
-        guard errorRevision == startingErrorRevision else {
+    private func clearLastErrorIfFresh(since startingCommandCompletionRevision: Int) {
+        guard commandCompletionRevision == startingCommandCompletionRevision else {
             return
         }
 
+        commandCompletionRevision += 1
         errorRevision += 1
         snapshot.lastError = nil
     }
