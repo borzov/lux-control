@@ -27,7 +27,6 @@ public actor BrightnessModel {
     }
 
     public func refreshDisplays() async {
-        let selectedStableKey = snapshot.selectedDisplay?.stableKey
         let displays = await controller.discover()
         var states: [String: DisplayState] = [:]
 
@@ -35,6 +34,7 @@ public actor BrightnessModel {
             states[display.stableKey] = await controller.readState(for: display.id)
         }
 
+        let selectedStableKey = snapshot.selectedDisplay?.stableKey
         snapshot = BrightnessSnapshot(
             displays: displays,
             selectedDisplay: selectedDisplay(in: displays, preserving: selectedStableKey),

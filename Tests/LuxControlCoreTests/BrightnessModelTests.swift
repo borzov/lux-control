@@ -39,6 +39,29 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.selectedDisplay == second)
     }
 
+    @Test("refreshDisplays preserves newer selection changed while refresh is in flight")
+    func refreshDisplaysPreservesNewerSelectionChangedWhileRefreshIsInFlight() async {
+        let first = display(id: 6, name: "First", supportLevel: .full)
+        let second = display(id: 7, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let refreshGate = AsyncGate()
+        await controller.setOnDiscover {
+            await refreshGate.suspend()
+        }
+
+        let refreshTask = Task {
+            await model.refreshDisplays()
+        }
+        await refreshGate.waitUntilSuspended()
+        await model.selectDisplay(stableKey: second.stableKey)
+        await refreshGate.resume()
+        await refreshTask.value
+
+        #expect(await model.snapshot.selectedDisplay == second)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)
@@ -225,6 +248,7 @@ actor MockDisplayController: DisplayControlling {
     var setBoostCalls: [DisplayID]
     var brightnessError: (any Error)?
     var boostError: (any Error)?
+    var onDiscover: (@Sendable () async -> Void)?
     var onSetBrightness: (@Sendable () async -> Void)?
     var onSetBoost: (@Sendable () async -> Void)?
 
@@ -235,6 +259,7 @@ actor MockDisplayController: DisplayControlling {
         setBoostCalls: [DisplayID] = [],
         brightnessError: (any Error)? = nil,
         boostError: (any Error)? = nil,
+        onDiscover: (@Sendable () async -> Void)? = nil,
         onSetBrightness: (@Sendable () async -> Void)? = nil,
         onSetBoost: (@Sendable () async -> Void)? = nil
     ) {
@@ -244,12 +269,16 @@ actor MockDisplayController: DisplayControlling {
         self.setBoostCalls = setBoostCalls
         self.brightnessError = brightnessError
         self.boostError = boostError
+        self.onDiscover = onDiscover
         self.onSetBrightness = onSetBrightness
         self.onSetBoost = onSetBoost
     }
 
     func discover() async -> [Display] {
-        displays
+        if let onDiscover {
+            await onDiscover()
+        }
+        return displays
     }
 
     func readState(for display: DisplayID) async -> DisplayState {
@@ -306,6 +335,10 @@ actor MockDisplayController: DisplayControlling {
         onSetBrightness = action
     }
 
+    func setOnDiscover(_ action: @escaping @Sendable () async -> Void) {
+        onDiscover = action
+    }
+
     private func stableKey(for display: DisplayID) -> String {
         switch display {
         case .directDisplayID(let displayID):
@@ -319,5 +352,34 @@ private struct TestWriteError: Error, LocalizedError, Sendable {
 
     var errorDescription: String? {
         message
+    }
+}
+
+private actor AsyncGate {
+    private var suspendedContinuation: CheckedContinuation<Void, Never>?
+    private var resumeContinuation: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        suspendedContinuation?.resume()
+        suspendedContinuation = nil
+
+        await withCheckedContinuation { continuation in
+            resumeContinuation = continuation
+        }
+    }
+
+    func waitUntilSuspended() async {
+        if resumeContinuation != nil {
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            suspendedContinuation = continuation
+        }
+    }
+
+    func resume() {
+        resumeContinuation?.resume()
+        resumeContinuation = nil
     }
 }
