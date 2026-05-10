@@ -409,6 +409,66 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == nil)
     }
 
+    @Test("older brightness success does not clear newer boost failure")
+    func olderBrightnessSuccessDoesNotClearNewerBoostFailure() async throws {
+        let full = display(id: 25, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let brightnessGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            await controller.clearOnSetBrightness()
+            await brightnessGate.suspend()
+        }
+
+        let brightnessWrite = Task {
+            try await model.setBrightness(.init(percent: 68))
+        }
+        await brightnessGate.waitUntilSuspended()
+        await controller.setBoostError(TestWriteError(message: "boost failed"))
+
+        await #expect(throws: DisplayControlError.writeFailed("boost failed")) {
+            try await model.setBoostEnabled(true)
+        }
+        await brightnessGate.resume()
+        try await brightnessWrite.value
+
+        #expect(await model.snapshot.states["cg-25"]?.brightness == .init(percent: 68))
+        #expect(await model.snapshot.states["cg-25"]?.boostEnabled == false)
+        #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("boost failed").localizedDescription)
+    }
+
+    @Test("older boost failure does not overwrite newer brightness success")
+    func olderBoostFailureDoesNotOverwriteNewerBrightnessSuccess() async throws {
+        let full = display(id: 26, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let boostGate = AsyncGate()
+        await controller.setOnSetBoost {
+            await controller.clearOnSetBoost()
+            await boostGate.suspend()
+        }
+
+        let boostWrite = Task {
+            do {
+                try await model.setBoostEnabled(true)
+                Issue.record("Older boost write should fail")
+            } catch {
+                #expect(error as? DisplayControlError == .writeFailed("boost failed"))
+            }
+        }
+        await boostGate.waitUntilSuspended()
+        try await model.setBrightness(.init(percent: 79))
+        await controller.setBoostError(TestWriteError(message: "boost failed"))
+        await boostGate.resume()
+        await boostWrite.value
+
+        #expect(await model.snapshot.states["cg-26"]?.brightness == .init(percent: 79))
+        #expect(await model.snapshot.states["cg-26"]?.boostEnabled == false)
+        #expect(await model.snapshot.lastError == nil)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)

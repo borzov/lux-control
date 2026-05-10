@@ -192,6 +192,10 @@ public actor BrightnessModel {
         commandStartRevisions[commandKey] == revision
     }
 
+    private func isLatestGlobalCommand(revision: UInt64) -> Bool {
+        nextCommandRevision == revision
+    }
+
     private func completeSuccessfulCommand(
         _ commandKey: CommandKey,
         revision: UInt64,
@@ -201,8 +205,7 @@ public actor BrightnessModel {
             return
         }
 
-        errorRevision += 1
-        snapshot.lastError = nil
+        clearLastErrorIfLatestGlobalCommand(revision: revision)
         updateStateIfDisplayExists(stableKey: commandKey.stableKey, transform)
     }
 
@@ -212,9 +215,26 @@ public actor BrightnessModel {
             return controlError
         }
 
-        errorRevision += 1
-        snapshot.lastError = controlError.localizedDescription
+        recordLastErrorIfLatestGlobalCommand(controlError, revision: revision)
         return controlError
+    }
+
+    private func clearLastErrorIfLatestGlobalCommand(revision: UInt64) {
+        guard isLatestGlobalCommand(revision: revision) else {
+            return
+        }
+
+        errorRevision += 1
+        snapshot.lastError = nil
+    }
+
+    private func recordLastErrorIfLatestGlobalCommand(_ error: DisplayControlError, revision: UInt64) {
+        guard isLatestGlobalCommand(revision: revision) else {
+            return
+        }
+
+        errorRevision += 1
+        snapshot.lastError = error.localizedDescription
     }
 
     private func recordUnscopedFailure(_ error: any Error) -> DisplayControlError {
