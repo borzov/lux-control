@@ -247,6 +247,14 @@ struct BrightnessModelTests {
         let controller = MockDisplayController(displays: [first, second])
         let model = BrightnessModel(controller: controller)
         await model.refreshDisplays()
+        await controller.setBrightnessError(TestWriteError(message: "previous failure"))
+
+        await #expect(throws: DisplayControlError.writeFailed("previous failure")) {
+            try await model.setBrightness(.init(percent: 10))
+        }
+        #expect(await model.snapshot.lastError == DisplayControlError.writeFailed("previous failure").localizedDescription)
+
+        await controller.clearBrightnessError()
         await controller.setOnSetBrightness {
             await controller.setDisplays([second])
             await model.refreshDisplays()
@@ -254,10 +262,11 @@ struct BrightnessModelTests {
 
         try await model.setBrightness(.init(percent: 35))
 
-        #expect(await controller.setBrightnessCalls == [first.id])
+        #expect(await controller.setBrightnessCalls == [first.id, first.id])
         #expect(await model.snapshot.displays == [second])
         #expect(await model.snapshot.states["cg-101"] == nil)
         #expect(await model.snapshot.states["cg-102"]?.brightness == .init(percent: 50))
+        #expect(await model.snapshot.lastError == nil)
     }
 
     private func display(id: UInt32, name: String, supportLevel: DisplaySupportLevel) -> Display {
@@ -354,6 +363,10 @@ actor MockDisplayController: DisplayControlling {
 
     func setBrightnessError(_ error: any Error) {
         brightnessError = error
+    }
+
+    func clearBrightnessError() {
+        brightnessError = nil
     }
 
     func setBoostError(_ error: any Error) {

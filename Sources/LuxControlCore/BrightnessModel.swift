@@ -62,6 +62,7 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
+            snapshot.lastError = nil
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
@@ -85,6 +86,7 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
+            snapshot.lastError = nil
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
@@ -120,7 +122,6 @@ public actor BrightnessModel {
 
         let current = snapshot.states[stableKey] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
         snapshot.states[stableKey] = transform(current)
-        snapshot.lastError = nil
     }
 
     private func recordFailure(_ error: any Error) -> DisplayControlError {
