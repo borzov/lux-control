@@ -3,14 +3,14 @@ import Testing
 
 @Suite("Diagnostics report")
 struct DiagnosticsReportTests {
-    @Test("make includes app, OS, display support, brightness, and boost state")
-    func makeIncludesDisplayDiagnostics() {
+    @Test("make includes display diagnostics without serial-derived identifiers")
+    func makeIncludesDisplayDiagnosticsWithoutSerialDerivedIdentifiers() {
         let display = Display(
             id: .directDisplayID(123),
             name: "Studio Display",
             vendorNumber: 1552,
-            modelNumber: 41006,
-            serialNumber: 987654,
+            modelNumber: 610,
+            serialNumber: 99,
             isBuiltin: false,
             supportLevel: .brightnessOnly
         )
@@ -23,11 +23,17 @@ struct DiagnosticsReportTests {
             states: [display.stableKey: state]
         )
 
-        #expect(report.contains("LuxControl 0.1.0"))
-        #expect(report.contains("macOS 15.0"))
-        #expect(report.contains("Studio Display"))
-        #expect(report.contains("brightnessOnly"))
-        #expect(report.contains("brightness: 72"))
-        #expect(report.contains("boost: false"))
+        #expect(report == """
+        LuxControl 0.1.0
+        OS: macOS 15.0
+        Displays: 1
+        - Studio Display
+          builtin: false
+          support: brightnessOnly
+          brightness: 72%
+          boost: false
+        """)
+        #expect(!report.contains("stableKey"))
+        #expect(!report.contains("1552-610-99"))
     }
 }

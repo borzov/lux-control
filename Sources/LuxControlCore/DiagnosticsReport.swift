@@ -16,10 +16,9 @@ public enum DiagnosticsReport {
         for display in displays {
             let state = states[display.stableKey]
             lines.append("- \(display.name)")
-            lines.append("  stableKey: \(display.stableKey)")
             lines.append("  builtin: \(display.isBuiltin)")
             lines.append("  support: \(display.supportLevel.rawValue)")
-            lines.append("  brightness: \(state?.brightness.percent.description ?? "unknown")")
+            lines.append("  brightness: \(state.map { "\($0.brightness.percent)%" } ?? "unknown")")
             lines.append("  boost: \(state?.boostEnabled.description ?? "unknown")")
         }
 
