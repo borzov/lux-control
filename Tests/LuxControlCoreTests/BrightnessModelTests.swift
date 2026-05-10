@@ -270,6 +270,46 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == nil)
     }
 
+    @Test("prewrite cancelled brightness command does not suppress older physical write")
+    func prewriteCancelledBrightnessCommandDoesNotSuppressOlderPhysicalWrite() async throws {
+        let full = display(id: 28, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let writeGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            await controller.clearOnSetBrightness()
+            await writeGate.suspend()
+        }
+
+        let olderWrite = Task {
+            try await model.setBrightness(.init(percent: 66))
+        }
+        await writeGate.waitUntilSuspended()
+        let cancellationGate = AsyncGate()
+        let newerWrite = Task {
+            await cancellationGate.suspend()
+            try await model.setBrightness(.init(percent: 77))
+        }
+        await cancellationGate.waitUntilSuspended()
+        newerWrite.cancel()
+        await cancellationGate.resume()
+        do {
+            try await newerWrite.value
+            Issue.record("Newer write should be cancelled")
+        } catch is CancellationError {
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        await writeGate.resume()
+        try await olderWrite.value
+
+        #expect(await controller.setBrightnessCalls == [full.id])
+        #expect(await model.snapshot.states["cg-28"]?.brightness == .init(percent: 66))
+        #expect(await model.snapshot.lastError == nil)
+    }
+
     @Test("newer brightness write updates final state after older brightness completes first")
     func newerBrightnessWriteUpdatesFinalStateAfterOlderBrightnessCompletesFirst() async throws {
         let full = display(id: 20, name: "Full", supportLevel: .full)
@@ -373,6 +413,46 @@ struct BrightnessModelTests {
         try await olderWrite.value
 
         #expect(await model.snapshot.states["cg-19"]?.boostEnabled == false)
+        #expect(await model.snapshot.lastError == nil)
+    }
+
+    @Test("prewrite cancelled boost command does not suppress older physical write")
+    func prewriteCancelledBoostCommandDoesNotSuppressOlderPhysicalWrite() async throws {
+        let full = display(id: 29, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let writeGate = AsyncGate()
+        await controller.setOnSetBoost {
+            await controller.clearOnSetBoost()
+            await writeGate.suspend()
+        }
+
+        let olderWrite = Task {
+            try await model.setBoostEnabled(true)
+        }
+        await writeGate.waitUntilSuspended()
+        let cancellationGate = AsyncGate()
+        let newerWrite = Task {
+            await cancellationGate.suspend()
+            try await model.setBoostEnabled(false)
+        }
+        await cancellationGate.waitUntilSuspended()
+        newerWrite.cancel()
+        await cancellationGate.resume()
+        do {
+            try await newerWrite.value
+            Issue.record("Newer write should be cancelled")
+        } catch is CancellationError {
+        } catch {
+            Issue.record("Expected CancellationError, got \(error)")
+        }
+
+        await writeGate.resume()
+        try await olderWrite.value
+
+        #expect(await controller.setBoostCalls == [full.id])
+        #expect(await model.snapshot.states["cg-29"]?.boostEnabled == true)
         #expect(await model.snapshot.lastError == nil)
     }
 

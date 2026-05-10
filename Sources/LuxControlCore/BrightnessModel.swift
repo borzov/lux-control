@@ -93,15 +93,16 @@ public actor BrightnessModel {
         }
         let stableKey = display.stableKey
         let commandKey = CommandKey(stableKey: stableKey, kind: .brightness)
-        let commandRevision = startCommand(commandKey)
+        var commandRevision: UInt64?
 
         do {
             guard display.supportLevel == .full || display.supportLevel == .brightnessOnly else {
                 throw DisplayControlError.unsupported(display.supportLevel)
             }
 
+            try Task.checkCancellation()
+            commandRevision = startCommand(commandKey)
             do {
-                try Task.checkCancellation()
                 try await controller.setBrightness(value, for: display.id)
             } catch is CancellationError {
                 throw CancellationError()
@@ -109,13 +110,19 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
+            guard let commandRevision else {
+                throw DisplayControlError.writeFailed("Command was not started.")
+            }
             completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw recordFailure(error, for: commandKey, revision: commandRevision)
+            if let commandRevision {
+                throw recordFailure(error, for: commandKey, revision: commandRevision)
+            }
+            throw recordFailureWithoutCommandRevision(error)
         }
     }
 
@@ -139,15 +146,16 @@ public actor BrightnessModel {
         }
         let stableKey = display.stableKey
         let commandKey = CommandKey(stableKey: stableKey, kind: .boost)
-        let commandRevision = startCommand(commandKey)
+        var commandRevision: UInt64?
 
         do {
             guard display.supportLevel == .full else {
                 throw DisplayControlError.unsupported(display.supportLevel)
             }
 
+            try Task.checkCancellation()
+            commandRevision = startCommand(commandKey)
             do {
-                try Task.checkCancellation()
                 try await controller.setBoostEnabled(enabled, for: display.id)
             } catch is CancellationError {
                 throw CancellationError()
@@ -155,13 +163,19 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
+            guard let commandRevision else {
+                throw DisplayControlError.writeFailed("Command was not started.")
+            }
             completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw recordFailure(error, for: commandKey, revision: commandRevision)
+            if let commandRevision {
+                throw recordFailure(error, for: commandKey, revision: commandRevision)
+            }
+            throw recordFailureWithoutCommandRevision(error)
         }
     }
 
@@ -256,6 +270,14 @@ public actor BrightnessModel {
         }
 
         recordLastErrorIfLatestGlobalCommand(controlError, revision: revision)
+        return controlError
+    }
+
+    private func recordFailureWithoutCommandRevision(_ error: any Error) -> DisplayControlError {
+        let controlError = normalizedControlError(error)
+        nextCommandRevision += 1
+        errorRevision += 1
+        snapshot.lastError = controlError.localizedDescription
         return controlError
     }
 
