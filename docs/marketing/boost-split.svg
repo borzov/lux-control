@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">LuxControl boost comparison on a MacBook display</title>
+  <desc id="desc">A MacBook display split into a dim left side and a bright right side showing LuxControl Boost.</desc>
+  <defs>
+    <linearGradient id="page" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f7f7f9"/>
+      <stop offset="1" stop-color="#e8ebf0"/>
+    </linearGradient>
+    <linearGradient id="desk" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#e9edf3"/>
+      <stop offset="1" stop-color="#d8dde6"/>
+    </linearGradient>
+    <linearGradient id="screenLeft" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#172132"/>
+      <stop offset="1" stop-color="#2c3446"/>
+    </linearGradient>
+    <linearGradient id="screenRight" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#cfe9ff"/>
+      <stop offset="0.45" stop-color="#fff0a8"/>
+      <stop offset="1" stop-color="#fff8dc"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="28" stdDeviation="34" flood-color="#000" flood-opacity="0.18"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#000" flood-opacity="0.14"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#page)"/>
+  <path d="M0 700 C300 636 530 642 800 698 C1090 758 1320 742 1600 688 L1600 900 L0 900 Z" fill="url(#desk)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="276" y="108" width="1048" height="664" rx="42" fill="#121217"/>
+    <rect x="306" y="138" width="988" height="604" rx="24" fill="#0b0c10"/>
+    <clipPath id="screenClip">
+      <rect x="306" y="138" width="988" height="604" rx="24"/>
+    </clipPath>
+    <g clip-path="url(#screenClip)">
+      <rect x="306" y="138" width="494" height="604" fill="url(#screenLeft)"/>
+      <rect x="800" y="138" width="494" height="604" fill="url(#screenRight)"/>
+      <rect x="798" y="138" width="4" height="604" fill="#fff" opacity="0.85"/>
+
+      <g opacity="0.82">
+        <circle cx="484" cy="280" r="54" fill="#344054"/>
+        <rect x="390" y="374" width="260" height="22" rx="11" fill="#566176"/>
+        <rect x="390" y="420" width="188" height="18" rx="9" fill="#4b566a"/>
+        <rect x="390" y="550" width="315" height="42" rx="12" fill="#30394b"/>
+      </g>
+
+      <g>
+        <circle cx="1088" cy="284" r="70" fill="#fff6ba" opacity="0.92"/>
+        <circle cx="1088" cy="284" r="118" fill="#ffe076" opacity="0.28"/>
+        <rect x="896" y="374" width="260" height="22" rx="11" fill="#3b4a5d" opacity="0.42"/>
+        <rect x="896" y="420" width="220" height="18" rx="9" fill="#3b4a5d" opacity="0.34"/>
+        <rect x="896" y="550" width="315" height="42" rx="12" fill="#ffffff" opacity="0.58"/>
+      </g>
+    </g>
+  </g>
+
+  <path d="M566 772 L1034 772 L1104 840 L496 840 Z" fill="#c9ced8"/>
+  <path d="M650 789 L950 789 L974 815 L626 815 Z" fill="#aeb4c0"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif">
+    <text x="306" y="72" fill="#1d1d1f" font-size="52" font-weight="700">LuxControl</text>
+    <text x="306" y="118" fill="#68686d" font-size="24">Brighter displays, same blacks.</text>
+    <text x="430" y="686" fill="#eef1f7" font-size="28" font-weight="650">Normal</text>
+    <text x="1036" y="686" fill="#1d1d1f" font-size="28" font-weight="650">Boost</text>
+  </g>
+</svg>

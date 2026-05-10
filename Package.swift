@@ -22,6 +22,8 @@ let package = Package(
                 .linkedFramework("IOKit"),
                 .linkedFramework("ServiceManagement"),
                 .linkedFramework("Carbon"),
+                .linkedFramework("AppKit"),
+                .linkedFramework("QuartzCore"),
             ]
         ),
         .executableTarget(

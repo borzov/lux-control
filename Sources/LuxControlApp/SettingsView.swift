@@ -1,21 +1,81 @@
 import SwiftUI
 import LuxControlCore
+import LuxControlMac
 
 struct SettingsView: View {
     let model: BrightnessModel
 
+    @AppStorage("launchBoostEnabled") private var launchBoostEnabled = false
     @State private var snapshot = BrightnessSnapshot()
     @State private var isRefreshing = false
+    @State private var launchAtLoginEnabled = LaunchAtLoginService().isEnabled
+    @State private var settingsError: String?
     @State private var refreshTask: Task<Void, Never>?
 
+    private let launchAtLoginService = LaunchAtLoginService()
+
     var body: some View {
-        diagnosticsView
-        .frame(width: 560, height: 360)
+        VStack(alignment: .leading, spacing: 18) {
+            generalSettings
+            appInfo
+            Divider()
+            diagnosticsView
+        }
+        .padding(20)
+        .frame(width: 560, height: 440)
         .onAppear {
+            launchAtLoginEnabled = launchAtLoginService.isEnabled
             startRefreshTask()
         }
         .onDisappear {
             cancelRefreshTask()
+        }
+    }
+
+    private var generalSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("General")
+                .font(.headline)
+
+            Toggle("Open LuxControl at login", isOn: launchAtLoginBinding)
+
+            Toggle("Enable Boost when LuxControl opens at login", isOn: $launchBoostEnabled)
+                .disabled(!launchAtLoginEnabled)
+                .foregroundStyle(launchAtLoginEnabled ? .primary : .secondary)
+
+            if let settingsError {
+                Text(settingsError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var appInfo: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("About")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 5) {
+                GridRow {
+                    Text("Version")
+                        .foregroundStyle(.secondary)
+                    Text(appVersion)
+                }
+                GridRow {
+                    Text("Developer")
+                        .foregroundStyle(.secondary)
+                    Text("Borzov")
+                }
+                GridRow {
+                    Text("Repository")
+                        .foregroundStyle(.secondary)
+                    Text("lux-control")
+                        .textSelection(.enabled)
+                }
+            }
+            .font(.callout)
         }
     }
 
@@ -43,7 +103,24 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(20)
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding {
+            launchAtLoginEnabled
+        } set: { enabled in
+            do {
+                try launchAtLoginService.setEnabled(enabled)
+                launchAtLoginEnabled = launchAtLoginService.isEnabled
+                if !launchAtLoginEnabled {
+                    launchBoostEnabled = false
+                }
+                settingsError = nil
+            } catch {
+                launchAtLoginEnabled = launchAtLoginService.isEnabled
+                settingsError = error.localizedDescription
+            }
+        }
     }
 
     private var diagnosticsText: String {

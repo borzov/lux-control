@@ -16,22 +16,34 @@ public struct CGDisplayDiscovery: DisplayDiscovering {
 
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        let brightnessClient = DisplayServicesBrightnessClient()
+        let boostClient = EDRBoostClient.shared
 
-        return ids.prefix(Int(count)).compactMap { id in
-            guard id != 0 else { return nil }
+        var displays: [Display] = []
+        for id in ids.prefix(Int(count)) {
+            guard id != 0 else { continue }
 
             let isBuiltin = CGDisplayIsBuiltin(id) != 0
+            let supportLevel: DisplaySupportLevel
+            if await boostClient.canBoost(for: id) {
+                supportLevel = .full
+            } else if brightnessClient.canChangeBrightness(for: id) || isBuiltin {
+                supportLevel = .brightnessOnly
+            } else {
+                supportLevel = .detectOnly
+            }
 
-            return Display(
+            displays.append(Display(
                 id: .directDisplayID(id),
                 name: isBuiltin ? "Built-in Display" : "External Display",
                 vendorNumber: nonZero(CGDisplayVendorNumber(id)),
                 modelNumber: nonZero(CGDisplayModelNumber(id)),
                 serialNumber: nonZero(CGDisplaySerialNumber(id)),
                 isBuiltin: isBuiltin,
-                supportLevel: isBuiltin ? .brightnessOnly : .detectOnly
-            )
+                supportLevel: supportLevel
+            ))
         }
+        return displays
     }
 
     private func nonZero(_ value: UInt32) -> UInt32? {

@@ -1,2 +1,5 @@
 .build/
 .swiftpm/
+.DS_Store
+.superpowers/
+dist/

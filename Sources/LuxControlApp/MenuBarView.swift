@@ -19,16 +19,13 @@ struct MenuBarView: View {
     @State private var brightnessWriteTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             header
 
             if snapshot.displays.isEmpty {
-                Text("No displays detected.")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                noDisplaysView
             } else {
-                displayPicker
-                boostToggle
+                boostHero
                 brightnessControl
                 supportStatus
             }
@@ -40,15 +37,9 @@ struct MenuBarView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Button {
-                startRefreshTask()
-            } label: {
-                Label("Refresh Displays", systemImage: "arrow.clockwise")
-            }
-            .disabled(isRefreshing)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            footer
         }
-        .padding(14)
+        .padding(16)
         .onAppear {
             isMenuVisible = true
             startRefreshTask()
@@ -61,8 +52,164 @@ struct MenuBarView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("LuxControl")
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("LuxControl")
+                    .font(.headline)
+                    .lineLimit(1)
+
+                Text("Brighter displays")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if !snapshot.displays.isEmpty {
+                displayPicker
+                    .frame(width: 172)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var noDisplaysView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "display.trianglebadge.exclamationmark")
+                .font(.system(size: 28, weight: .regular))
+                .foregroundStyle(.secondary)
+
+            Text("No displays detected.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 132)
+    }
+
+    private var displayPicker: some View {
+        Picker("Display", selection: selectedDisplayBinding) {
+            ForEach(snapshot.displays) { display in
+                Text(display.name)
+                    .tag(display.stableKey)
+            }
+        }
+        .labelsHidden()
+        .disabled(snapshot.displays.isEmpty)
+    }
+
+    private var boostHero: some View {
+        Button {
+            guard selectedDisplay(in: snapshot)?.supportLevel == .full else {
+                return
+            }
+            boostBinding.wrappedValue.toggle()
+        } label: {
+            VStack(spacing: 9) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: boostEnabled
+                                    ? [
+                                        Color(red: 1.0, green: 0.96, blue: 0.62),
+                                        Color(red: 1.0, green: 0.72, blue: 0.0),
+                                        Color(red: 1.0, green: 0.48, blue: 0.0),
+                                    ]
+                                    : [
+                                        Color(nsColor: .controlBackgroundColor),
+                                        Color(nsColor: .separatorColor).opacity(0.55),
+                                    ],
+                                center: .topLeading,
+                                startRadius: 8,
+                                endRadius: 72
+                            )
+                        )
+                        .shadow(
+                            color: boostEnabled ? .orange.opacity(0.34) : .clear,
+                            radius: 22,
+                            x: 0,
+                            y: 8
+                        )
+
+                    VStack(spacing: 2) {
+                        Image(systemName: boostEnabled ? "sun.max.fill" : "sun.max")
+                            .font(.system(size: 26, weight: .semibold))
+
+                        Text(boostEnabled ? "2x" : "1x")
+                            .font(.system(size: 23, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(boostEnabled ? .black.opacity(0.78) : .secondary)
+                }
+                .frame(width: 126, height: 126)
+                .contentShape(Circle())
+
+                VStack(spacing: 2) {
+                    Text(boostEnabled ? "Boost active" : "Boost off")
+                        .font(.callout.weight(.semibold))
+
+                    Text(boostCaption)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .disabled(isChangingSelection || selectedDisplay(in: snapshot)?.supportLevel != .full)
+    }
+
+    private var brightnessControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Brightness", systemImage: "sun.max")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Text(isChangingSelection ? "--%" : "\(Int(brightness.rounded()))%")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, alignment: .trailing)
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "sun.min")
+                    .foregroundStyle(.secondary)
+
+                Slider(
+                    value: brightnessBinding,
+                    in: 0...100,
+                    onEditingChanged: handleBrightnessEditingChanged
+                )
+                    .disabled(isChangingSelection || !selectedDisplaySupportsBrightness)
+                    .tint(.orange)
+
+                Image(systemName: "sun.max")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var supportStatus: some View {
+        Text(supportDescription(for: selectedDisplay(in: snapshot)))
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Button {
+                startRefreshTask()
+            } label: {
+                Label("Refresh Displays", systemImage: "arrow.clockwise")
+            }
+            .disabled(isRefreshing)
 
             Spacer()
 
@@ -73,71 +220,16 @@ struct MenuBarView: View {
             } label: {
                 Label("Settings", systemImage: "gearshape")
             }
-            .labelStyle(.iconOnly)
-            .help("Settings")
 
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {
                 Label("Quit", systemImage: "power")
             }
-            .labelStyle(.iconOnly)
-            .help("Quit LuxControl")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var displayPicker: some View {
-        Picker("Display", selection: selectedDisplayBinding) {
-            ForEach(snapshot.displays) { display in
-                Text(display.name)
-                    .tag(display.stableKey)
-            }
-        }
-        .disabled(snapshot.displays.isEmpty)
-    }
-
-    private var boostToggle: some View {
-        Toggle(isOn: boostBinding) {
-            Label("Boost", systemImage: "sun.max.fill")
-        }
-        .disabled(isChangingSelection || selectedDisplay(in: snapshot)?.supportLevel != .full)
-    }
-
-    private var brightnessControl: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "sun.min")
-                    .foregroundStyle(.secondary)
-
-                Slider(
-                    value: brightnessBinding,
-                    in: 0...100,
-                    step: 1,
-                    onEditingChanged: handleBrightnessEditingChanged
-                )
-                    .disabled(isChangingSelection || !selectedDisplaySupportsBrightness)
-
-                Image(systemName: "sun.max")
-                    .foregroundStyle(.secondary)
-
-                Text(isChangingSelection ? "--%" : "\(Int(brightness.rounded()))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, alignment: .trailing)
-            }
-
-            Text("Brightness")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var supportStatus: some View {
-        Text(supportDescription(for: selectedDisplay(in: snapshot)))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .controlSize(.regular)
     }
 
     private var selectedDisplayBinding: Binding<String> {
@@ -214,6 +306,19 @@ struct MenuBarView: View {
             return true
         case .detectOnly, .unsupported, nil:
             return false
+        }
+    }
+
+    private var boostCaption: String {
+        switch selectedDisplay(in: snapshot)?.supportLevel {
+        case .full:
+            return boostEnabled ? "Extended brightness enabled" : "Tap to enable extended brightness"
+        case .brightnessOnly:
+            return "Unavailable for this display"
+        case .detectOnly, .unsupported:
+            return "Display control unavailable"
+        case nil:
+            return "No display selected"
         }
     }
 

@@ -16,18 +16,40 @@ final class PublicDisplayControllerTests: XCTestCase {
 
     func testDefaultReadStateForKnownDisplay() async {
         let display = makeDisplay(id: 1, supportLevel: .full)
-        let controller = PublicDisplayController(discovery: MockDisplayDiscovery(displays: [display]))
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: MockBrightnessClient(readValues: [:]),
+            boostClient: MockBoostClient()
+        )
 
         let state = await controller.readState(for: display.id)
 
         XCTAssertEqual(state, DisplayState(brightness: BrightnessValue(percent: 50), boostEnabled: false))
     }
 
+    func testReadStateUsesSystemBrightnessWhenAvailable() async {
+        let display = makeDisplay(id: 1, supportLevel: .brightnessOnly)
+        let brightnessClient = MockBrightnessClient(readValues: [1: 1.0])
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: brightnessClient,
+            boostClient: MockBoostClient()
+        )
+
+        let state = await controller.readState(for: display.id)
+
+        XCTAssertEqual(state.brightness, BrightnessValue(percent: 100))
+    }
+
     func testBrightnessUpdateUsesStableKeyAcrossDirectDisplayIDChange() async throws {
         let firstDisplay = makeDisplay(id: 1, supportLevel: .full)
         let secondDisplay = makeDisplay(id: 2, supportLevel: .full)
         let discovery = MockDisplayDiscovery(displays: [firstDisplay])
-        let controller = PublicDisplayController(discovery: discovery)
+        let controller = PublicDisplayController(
+            discovery: discovery,
+            brightnessClient: MockBrightnessClient(readValues: [:]),
+            boostClient: MockBoostClient()
+        )
 
         try await controller.setBrightness(BrightnessValue(percent: 82), for: firstDisplay.id)
         await discovery.setDisplays([secondDisplay])
@@ -40,12 +62,30 @@ final class PublicDisplayControllerTests: XCTestCase {
 
     func testBrightnessWriteSucceedsForBrightnessOnlyDisplay() async throws {
         let display = makeDisplay(id: 1, supportLevel: .brightnessOnly)
-        let controller = PublicDisplayController(discovery: MockDisplayDiscovery(displays: [display]))
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: MockBrightnessClient(readValues: [:]),
+            boostClient: MockBoostClient()
+        )
 
         try await controller.setBrightness(BrightnessValue(percent: 65), for: display.id)
 
         let state = await controller.readState(for: display.id)
         XCTAssertEqual(state.brightness, BrightnessValue(percent: 65))
+    }
+
+    func testBrightnessWriteUpdatesSystemBrightness() async throws {
+        let display = makeDisplay(id: 1, supportLevel: .brightnessOnly)
+        let brightnessClient = MockBrightnessClient(readValues: [1: 0.5])
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: brightnessClient,
+            boostClient: MockBoostClient()
+        )
+
+        try await controller.setBrightness(BrightnessValue(percent: 82), for: display.id)
+
+        XCTAssertEqual(brightnessClient.writes, [1: 0.82])
     }
 
     func testBrightnessWriteThrowsUnsupportedForDetectOnlyDisplay() async throws {
@@ -58,7 +98,11 @@ final class PublicDisplayControllerTests: XCTestCase {
 
     func testBoostWriteThrowsUnsupportedWithSupportLevel() async throws {
         let display = makeDisplay(id: 1, supportLevel: .brightnessOnly)
-        let controller = PublicDisplayController(discovery: MockDisplayDiscovery(displays: [display]))
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: MockBrightnessClient(readValues: [:]),
+            boostClient: MockBoostClient()
+        )
 
         do {
             try await controller.setBoostEnabled(true, for: display.id)
@@ -70,9 +114,28 @@ final class PublicDisplayControllerTests: XCTestCase {
         }
     }
 
+    func testBoostWriteUpdatesBoostClient() async throws {
+        let display = makeDisplay(id: 1, supportLevel: .full)
+        let boostClient = MockBoostClient()
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: MockBrightnessClient(readValues: [:]),
+            boostClient: boostClient
+        )
+
+        try await controller.setBoostEnabled(true, for: display.id)
+
+        let writes = await boostClient.writes
+        XCTAssertEqual(writes, [1: true])
+    }
+
     func testWriteThrowsDisplayNotFoundForUnknownDisplay() async throws {
         let display = makeDisplay(id: 1, supportLevel: .full)
-        let controller = PublicDisplayController(discovery: MockDisplayDiscovery(displays: [display]))
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: MockBrightnessClient(readValues: [:]),
+            boostClient: MockBoostClient()
+        )
 
         do {
             try await controller.setBrightness(BrightnessValue(percent: 70), for: .directDisplayID(404))
@@ -90,7 +153,11 @@ final class PublicDisplayControllerTests: XCTestCase {
         line: UInt = #line
     ) async throws {
         let display = makeDisplay(id: 1, supportLevel: supportLevel)
-        let controller = PublicDisplayController(discovery: MockDisplayDiscovery(displays: [display]))
+        let controller = PublicDisplayController(
+            discovery: MockDisplayDiscovery(displays: [display]),
+            brightnessClient: MockBrightnessClient(readValues: [:]),
+            boostClient: MockBoostClient()
+        )
 
         do {
             try await controller.setBrightness(BrightnessValue(percent: 70), for: display.id)
@@ -134,5 +201,60 @@ private actor MockDisplayDiscovery: DisplayDiscovering {
 
     func setDisplays(_ displays: [Display]) {
         self.displays = displays
+    }
+}
+
+private final class MockBrightnessClient: DisplayBrightnessClient, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UInt32: Float]
+    private var writtenValues: [UInt32: Float] = [:]
+
+    var writes: [UInt32: Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        return writtenValues
+    }
+
+    init(readValues: [UInt32: Float]) {
+        self.values = readValues
+    }
+
+    func canChangeBrightness(for displayID: UInt32) -> Bool {
+        true
+    }
+
+    func readBrightness(for displayID: UInt32) -> Float? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values[displayID]
+    }
+
+    func setBrightness(_ value: Float, for displayID: UInt32) throws {
+        lock.lock()
+        values[displayID] = value
+        writtenValues[displayID] = value
+        lock.unlock()
+    }
+}
+
+private actor MockBoostClient: DisplayBoostClient {
+    private var values: [UInt32: Bool] = [:]
+    private var writtenValues: [UInt32: Bool] = [:]
+
+    var writes: [UInt32: Bool] {
+        writtenValues
+    }
+
+    func canBoost(for displayID: UInt32) async -> Bool {
+        true
+    }
+
+    func isBoostEnabled(for displayID: UInt32) async -> Bool {
+        return values[displayID] ?? false
+    }
+
+    func setBoostEnabled(_ enabled: Bool, for displayID: UInt32) async throws {
+        values[displayID] = enabled
+        writtenValues[displayID] = enabled
     }
 }
