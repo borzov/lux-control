@@ -582,6 +582,40 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.states["cg-52"]?.brightness == .init(percent: 12))
     }
 
+    @Test("targeted brightness write does not depend on current selected display")
+    func targetedBrightnessWriteDoesNotDependOnCurrentSelectedDisplay() async throws {
+        let first = display(id: 53, name: "First", supportLevel: .full)
+        let second = display(id: 54, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        await model.selectDisplay(stableKey: second.stableKey)
+
+        try await model.setBrightness(.init(percent: 34), forStableKey: first.stableKey)
+
+        #expect(await controller.setBrightnessCalls == [first.id])
+        #expect(await model.snapshot.selectedDisplay == second)
+        #expect(await model.snapshot.states["cg-53"]?.brightness == .init(percent: 34))
+        #expect(await model.snapshot.states["cg-54"]?.brightness == .init(percent: 50))
+    }
+
+    @Test("targeted boost write does not depend on current selected display")
+    func targetedBoostWriteDoesNotDependOnCurrentSelectedDisplay() async throws {
+        let first = display(id: 55, name: "First", supportLevel: .full)
+        let second = display(id: 56, name: "Second", supportLevel: .full)
+        let controller = MockDisplayController(displays: [first, second])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        await model.selectDisplay(stableKey: second.stableKey)
+
+        try await model.setBoostEnabled(true, forStableKey: first.stableKey)
+
+        #expect(await controller.setBoostCalls == [first.id])
+        #expect(await model.snapshot.selectedDisplay == second)
+        #expect(await model.snapshot.states["cg-55"]?.boostEnabled == true)
+        #expect(await model.snapshot.states["cg-56"]?.boostEnabled == false)
+    }
+
     @Test("setBrightness throws displayNotFound when no display is selected")
     func setBrightnessThrowsDisplayNotFoundWhenNoDisplayIsSelected() async {
         let controller = MockDisplayController(displays: [])

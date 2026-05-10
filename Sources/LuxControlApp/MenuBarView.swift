@@ -184,21 +184,14 @@ struct MenuBarView: View {
                 } catch {
                     return
                 }
-                await model.selectDisplay(stableKey: targetStableKey)
                 do {
-                    try Task.checkCancellation()
-                } catch {
-                    return
-                }
-                do {
-                    try await model.setBoostEnabled(enabled)
+                    try await model.setBoostEnabled(enabled, forStableKey: targetStableKey)
                 } catch {
                     // BrightnessModel records command failures in snapshot.lastError.
                 }
                 guard isTaskStillActive() else {
                     return
                 }
-                await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
                 await refreshSnapshot()
                 await MainActor.run {
                     boostWriteTask = nil
@@ -318,14 +311,8 @@ struct MenuBarView: View {
             } catch {
                 return
             }
-            await model.selectDisplay(stableKey: targetStableKey)
             do {
-                try Task.checkCancellation()
-            } catch {
-                return
-            }
-            do {
-                try await model.setBrightness(.init(percent: percent))
+                try await model.setBrightness(.init(percent: percent), forStableKey: targetStableKey)
             } catch {
                 // BrightnessModel records command failures in snapshot.lastError.
             }
@@ -333,7 +320,6 @@ struct MenuBarView: View {
             guard isTaskStillActive() else {
                 return
             }
-            await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
             await refreshSnapshot()
             await MainActor.run {
                 brightnessWriteTask = nil
@@ -377,24 +363,6 @@ struct MenuBarView: View {
 
     private func selectedDisplay(in snapshot: BrightnessSnapshot) -> Display? {
         snapshot.displays.first { $0.stableKey == (pendingSelectedKey ?? selectedStableKey) } ?? snapshot.selectedDisplay
-    }
-
-    private func restoreSelectedDisplayIfNeeded(commandTargetStableKey: String) async {
-        let desiredStableKey = await MainActor.run {
-            pendingSelectedKey ?? selectedStableKey
-        }
-
-        guard !desiredStableKey.isEmpty,
-              desiredStableKey != commandTargetStableKey else {
-            return
-        }
-
-        do {
-            try Task.checkCancellation()
-        } catch {
-            return
-        }
-        await model.selectDisplay(stableKey: desiredStableKey)
     }
 
     private func cancelPendingTasks() {

@@ -74,9 +74,20 @@ public actor BrightnessModel {
     }
 
     public func setBrightness(_ value: BrightnessValue) async throws {
+        let stableKey: String
+        do {
+            stableKey = try selectedDisplay().stableKey
+        } catch {
+            throw recordUnscopedFailure(error)
+        }
+
+        try await setBrightness(value, forStableKey: stableKey)
+    }
+
+    public func setBrightness(_ value: BrightnessValue, forStableKey stableKey: String) async throws {
         let display: Display
         do {
-            display = try selectedDisplay()
+            display = try resolveDisplay(forStableKey: stableKey)
         } catch {
             throw recordUnscopedFailure(error)
         }
@@ -90,7 +101,10 @@ public actor BrightnessModel {
             }
 
             do {
+                try Task.checkCancellation()
                 try await controller.setBrightness(value, for: display.id)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw normalizedControlError(error)
             }
@@ -98,15 +112,28 @@ public actor BrightnessModel {
             completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw recordFailure(error, for: commandKey, revision: commandRevision)
         }
     }
 
     public func setBoostEnabled(_ enabled: Bool) async throws {
+        let stableKey: String
+        do {
+            stableKey = try selectedDisplay().stableKey
+        } catch {
+            throw recordUnscopedFailure(error)
+        }
+
+        try await setBoostEnabled(enabled, forStableKey: stableKey)
+    }
+
+    public func setBoostEnabled(_ enabled: Bool, forStableKey stableKey: String) async throws {
         let display: Display
         do {
-            display = try selectedDisplay()
+            display = try resolveDisplay(forStableKey: stableKey)
         } catch {
             throw recordUnscopedFailure(error)
         }
@@ -120,7 +147,10 @@ public actor BrightnessModel {
             }
 
             do {
+                try Task.checkCancellation()
                 try await controller.setBoostEnabled(enabled, for: display.id)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw normalizedControlError(error)
             }
@@ -128,6 +158,8 @@ public actor BrightnessModel {
             completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw recordFailure(error, for: commandKey, revision: commandRevision)
         }
@@ -135,6 +167,14 @@ public actor BrightnessModel {
 
     private func selectedDisplay() throws -> Display {
         guard let display = snapshot.selectedDisplay else {
+            throw DisplayControlError.displayNotFound
+        }
+
+        return display
+    }
+
+    private func resolveDisplay(forStableKey stableKey: String) throws -> Display {
+        guard let display = snapshot.displays.first(where: { $0.stableKey == stableKey }) else {
             throw DisplayControlError.displayNotFound
         }
 
