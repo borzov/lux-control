@@ -8,29 +8,14 @@ struct SettingsView: View {
     @State private var isRefreshing = false
 
     var body: some View {
-        TabView {
-            Form {
-                Text("General settings will be available when system service integration is enabled.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(20)
-            .tabItem {
-                Label("General", systemImage: "gearshape")
-            }
-
-            diagnosticsTab
-                .tabItem {
-                    Label("Diagnostics", systemImage: "stethoscope")
-                }
-        }
+        diagnosticsView
         .frame(width: 560, height: 360)
         .task {
             await refreshSnapshot()
         }
     }
 
-    private var diagnosticsTab: some View {
+    private var diagnosticsView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Diagnostics")

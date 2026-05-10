@@ -5,6 +5,8 @@ import LuxControlMac
 
 @main
 struct LuxControlApp: App {
+    @Environment(\.openSettings) private var openSettings
+
     private let model = BrightnessModel(controller: PublicDisplayController())
 
     init() {
@@ -13,9 +15,12 @@ struct LuxControlApp: App {
 
     var body: some Scene {
         MenuBarExtra("LuxControl", systemImage: "sun.max") {
-            MenuBarView(model: model)
+            MenuBarView(model: model) {
+                openSettings()
+            }
                 .frame(width: 320)
         }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView(model: model)

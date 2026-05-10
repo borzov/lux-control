@@ -1,10 +1,13 @@
+import AppKit
 import SwiftUI
 import LuxControlCore
 
 struct MenuBarView: View {
     let model: BrightnessModel
+    let openSettings: () -> Void
 
     @State private var snapshot = BrightnessSnapshot()
+    @State private var selectedStableKey = ""
     @State private var brightness = 50.0
     @State private var boostEnabled = false
     @State private var isRefreshing = false
@@ -46,12 +49,35 @@ struct MenuBarView: View {
         .task {
             await refreshDisplays()
         }
+        .onDisappear {
+            cancelPendingWrites()
+        }
     }
 
     private var header: some View {
-        Text("LuxControl")
-            .font(.headline)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        HStack(spacing: 8) {
+            Text("LuxControl")
+                .font(.headline)
+
+            Spacer()
+
+            Button {
+                openSettings()
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .labelStyle(.iconOnly)
+            .help("Settings")
+
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Label("Quit", systemImage: "power")
+            }
+            .labelStyle(.iconOnly)
+            .help("Quit LuxControl")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var displayPicker: some View {
@@ -68,7 +94,7 @@ struct MenuBarView: View {
         Toggle(isOn: boostBinding) {
             Label("Boost", systemImage: "sun.max.fill")
         }
-        .disabled(snapshot.selectedDisplay?.supportLevel != .full)
+        .disabled(selectedDisplay(in: snapshot)?.supportLevel != .full)
     }
 
     private var brightnessControl: some View {
@@ -101,7 +127,7 @@ struct MenuBarView: View {
     }
 
     private var supportStatus: some View {
-        Text(supportDescription(for: snapshot.selectedDisplay))
+        Text(supportDescription(for: selectedDisplay(in: snapshot)))
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -109,8 +135,9 @@ struct MenuBarView: View {
 
     private var selectedDisplayBinding: Binding<String> {
         Binding {
-            snapshot.selectedDisplay?.stableKey ?? ""
+            selectedStableKey
         } set: { stableKey in
+            selectedStableKey = stableKey
             Task {
                 await model.selectDisplay(stableKey: stableKey)
                 await refreshSnapshot()
@@ -122,13 +149,19 @@ struct MenuBarView: View {
         Binding {
             boostEnabled
         } set: { enabled in
+            guard let targetStableKey = selectedStableKeyForCommand else {
+                return
+            }
+
             boostEnabled = enabled
             Task {
+                await model.selectDisplay(stableKey: targetStableKey)
                 do {
                     try await model.setBoostEnabled(enabled)
                 } catch {
                     // BrightnessModel records command failures in snapshot.lastError.
                 }
+                await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
                 await refreshSnapshot()
             }
         }
@@ -143,7 +176,7 @@ struct MenuBarView: View {
     }
 
     private var selectedDisplaySupportsBrightness: Bool {
-        switch snapshot.selectedDisplay?.supportLevel {
+        switch selectedDisplay(in: snapshot)?.supportLevel {
         case .full, .brightnessOnly:
             return true
         case .detectOnly, .unsupported, nil:
@@ -154,8 +187,9 @@ struct MenuBarView: View {
     @MainActor
     private func applySnapshot(_ snapshot: BrightnessSnapshot) {
         self.snapshot = snapshot
+        updateSelectedStableKey(with: snapshot)
 
-        guard let selectedDisplay = snapshot.selectedDisplay,
+        guard let selectedDisplay = selectedDisplay(in: snapshot),
               let state = snapshot.states[selectedDisplay.stableKey] else {
             brightness = 50
             boostEnabled = false
@@ -186,10 +220,14 @@ struct MenuBarView: View {
         guard !isEditing else {
             return
         }
+        guard let targetStableKey = selectedStableKeyForCommand else {
+            return
+        }
 
         brightnessWriteTask?.cancel()
         let percent = Int(brightness.rounded())
         brightnessWriteTask = Task {
+            await model.selectDisplay(stableKey: targetStableKey)
             do {
                 try await model.setBrightness(.init(percent: percent))
             } catch {
@@ -199,8 +237,49 @@ struct MenuBarView: View {
             guard !Task.isCancelled else {
                 return
             }
+            await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
             await refreshSnapshot()
         }
+    }
+
+    private var selectedStableKeyForCommand: String? {
+        let stableKey = selectedStableKey
+        guard !stableKey.isEmpty else {
+            return nil
+        }
+        return stableKey
+    }
+
+    @MainActor
+    private func updateSelectedStableKey(with snapshot: BrightnessSnapshot) {
+        if !selectedStableKey.isEmpty,
+           snapshot.displays.contains(where: { $0.stableKey == selectedStableKey }) {
+            return
+        }
+
+        selectedStableKey = snapshot.selectedDisplay?.stableKey ?? ""
+    }
+
+    private func selectedDisplay(in snapshot: BrightnessSnapshot) -> Display? {
+        snapshot.displays.first { $0.stableKey == selectedStableKey } ?? snapshot.selectedDisplay
+    }
+
+    private func restoreSelectedDisplayIfNeeded(commandTargetStableKey: String) async {
+        let desiredStableKey = await MainActor.run {
+            selectedStableKey
+        }
+
+        guard !desiredStableKey.isEmpty,
+              desiredStableKey != commandTargetStableKey else {
+            return
+        }
+
+        await model.selectDisplay(stableKey: desiredStableKey)
+    }
+
+    private func cancelPendingWrites() {
+        brightnessWriteTask?.cancel()
+        brightnessWriteTask = nil
     }
 
     private func supportDescription(for display: Display?) -> String {
