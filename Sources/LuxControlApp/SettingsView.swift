@@ -6,12 +6,16 @@ struct SettingsView: View {
 
     @State private var snapshot = BrightnessSnapshot()
     @State private var isRefreshing = false
+    @State private var refreshTask: Task<Void, Never>?
 
     var body: some View {
         diagnosticsView
         .frame(width: 560, height: 360)
-        .task {
-            await refreshDiagnostics()
+        .onAppear {
+            startRefreshTask()
+        }
+        .onDisappear {
+            cancelRefreshTask()
         }
     }
 
@@ -24,9 +28,7 @@ struct SettingsView: View {
                 Spacer()
 
                 Button {
-                    Task {
-                        await refreshDiagnostics()
-                    }
+                    startRefreshTask()
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -46,7 +48,7 @@ struct SettingsView: View {
 
     private var diagnosticsText: String {
         let report = DiagnosticsReport.make(
-            appVersion: "0.1.0",
+            appVersion: appVersion,
             osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
             displays: snapshot.displays,
             states: snapshot.states
@@ -57,6 +59,23 @@ struct SettingsView: View {
         }
 
         return "\(report)\nLast error: \(lastError)"
+    }
+
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+
+    private func startRefreshTask() {
+        guard refreshTask == nil else {
+            return
+        }
+
+        refreshTask = Task {
+            await refreshDiagnostics()
+            await MainActor.run {
+                refreshTask = nil
+            }
+        }
     }
 
     private func refreshDiagnostics() async {
@@ -71,17 +90,44 @@ struct SettingsView: View {
             return
         }
 
+        do {
+            try Task.checkCancellation()
+        } catch {
+            await finishRefreshing()
+            return
+        }
         await model.refreshDisplays()
+        do {
+            try Task.checkCancellation()
+        } catch {
+            await finishRefreshing()
+            return
+        }
         await refreshSnapshot()
+        await finishRefreshing()
+    }
+
+    private func refreshSnapshot() async {
+        let snapshot = await model.snapshot
+        do {
+            try Task.checkCancellation()
+        } catch {
+            return
+        }
+        await MainActor.run {
+            self.snapshot = snapshot
+        }
+    }
+
+    private func finishRefreshing() async {
         await MainActor.run {
             isRefreshing = false
         }
     }
 
-    private func refreshSnapshot() async {
-        let snapshot = await model.snapshot
-        await MainActor.run {
-            self.snapshot = snapshot
-        }
+    private func cancelRefreshTask() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        isRefreshing = false
     }
 }

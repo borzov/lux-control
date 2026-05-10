@@ -8,6 +8,7 @@ struct MenuBarView: View {
 
     @State private var snapshot = BrightnessSnapshot()
     @State private var selectedStableKey = ""
+    @State private var pendingSelectedKey: String?
     @State private var brightness = 50.0
     @State private var boostEnabled = false
     @State private var isRefreshing = false
@@ -100,7 +101,7 @@ struct MenuBarView: View {
         Toggle(isOn: boostBinding) {
             Label("Boost", systemImage: "sun.max.fill")
         }
-        .disabled(selectedDisplay(in: snapshot)?.supportLevel != .full)
+        .disabled(isChangingSelection || selectedDisplay(in: snapshot)?.supportLevel != .full)
     }
 
     private var brightnessControl: some View {
@@ -115,7 +116,7 @@ struct MenuBarView: View {
                     step: 1,
                     onEditingChanged: handleBrightnessEditingChanged
                 )
-                    .disabled(!selectedDisplaySupportsBrightness)
+                    .disabled(isChangingSelection || !selectedDisplaySupportsBrightness)
 
                 Image(systemName: "sun.max")
                     .foregroundStyle(.secondary)
@@ -141,11 +142,16 @@ struct MenuBarView: View {
 
     private var selectedDisplayBinding: Binding<String> {
         Binding {
-            selectedStableKey
+            pendingSelectedKey ?? selectedStableKey
         } set: { stableKey in
-            selectedStableKey = stableKey
+            pendingSelectedKey = stableKey
             selectTask?.cancel()
             selectTask = Task {
+                do {
+                    try Task.checkCancellation()
+                } catch {
+                    return
+                }
                 await model.selectDisplay(stableKey: stableKey)
                 guard isTaskStillActive() else {
                     return
@@ -153,6 +159,10 @@ struct MenuBarView: View {
                 await refreshSnapshot()
             }
         }
+    }
+
+    private var isChangingSelection: Bool {
+        pendingSelectedKey != nil
     }
 
     private var boostBinding: Binding<Bool> {
@@ -166,7 +176,17 @@ struct MenuBarView: View {
             boostEnabled = enabled
             boostWriteTask?.cancel()
             boostWriteTask = Task {
+                do {
+                    try Task.checkCancellation()
+                } catch {
+                    return
+                }
                 await model.selectDisplay(stableKey: targetStableKey)
+                do {
+                    try Task.checkCancellation()
+                } catch {
+                    return
+                }
                 do {
                     try await model.setBoostEnabled(enabled)
                 } catch {
@@ -202,6 +222,7 @@ struct MenuBarView: View {
     private func applySnapshot(_ snapshot: BrightnessSnapshot) {
         self.snapshot = snapshot
         updateSelectedStableKey(with: snapshot)
+        clearPendingSelectionIfResolved(with: snapshot)
 
         guard let selectedDisplay = selectedDisplay(in: snapshot),
               let state = snapshot.states[selectedDisplay.stableKey] else {
@@ -286,7 +307,17 @@ struct MenuBarView: View {
         brightnessWriteTask?.cancel()
         let percent = Int(brightness.rounded())
         brightnessWriteTask = Task {
+            do {
+                try Task.checkCancellation()
+            } catch {
+                return
+            }
             await model.selectDisplay(stableKey: targetStableKey)
+            do {
+                try Task.checkCancellation()
+            } catch {
+                return
+            }
             do {
                 try await model.setBrightness(.init(percent: percent))
             } catch {
@@ -311,6 +342,10 @@ struct MenuBarView: View {
 
     @MainActor
     private func updateSelectedStableKey(with snapshot: BrightnessSnapshot) {
+        if pendingSelectedKey != nil {
+            return
+        }
+
         if !selectedStableKey.isEmpty,
            snapshot.displays.contains(where: { $0.stableKey == selectedStableKey }) {
             return
@@ -319,8 +354,20 @@ struct MenuBarView: View {
         selectedStableKey = snapshot.selectedDisplay?.stableKey ?? ""
     }
 
+    @MainActor
+    private func clearPendingSelectionIfResolved(with snapshot: BrightnessSnapshot) {
+        guard let pendingSelectedKey,
+              snapshot.selectedDisplay?.stableKey == pendingSelectedKey,
+              snapshot.states[pendingSelectedKey] != nil else {
+            return
+        }
+
+        selectedStableKey = pendingSelectedKey
+        self.pendingSelectedKey = nil
+    }
+
     private func selectedDisplay(in snapshot: BrightnessSnapshot) -> Display? {
-        snapshot.displays.first { $0.stableKey == selectedStableKey } ?? snapshot.selectedDisplay
+        snapshot.displays.first { $0.stableKey == (pendingSelectedKey ?? selectedStableKey) } ?? snapshot.selectedDisplay
     }
 
     private func restoreSelectedDisplayIfNeeded(commandTargetStableKey: String) async {
@@ -333,6 +380,11 @@ struct MenuBarView: View {
             return
         }
 
+        do {
+            try Task.checkCancellation()
+        } catch {
+            return
+        }
         await model.selectDisplay(stableKey: desiredStableKey)
     }
 
@@ -345,6 +397,7 @@ struct MenuBarView: View {
         selectTask = nil
         boostWriteTask = nil
         brightnessWriteTask = nil
+        pendingSelectedKey = nil
         isRefreshing = false
     }
 
