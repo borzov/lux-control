@@ -188,6 +188,34 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.states["cg-15"]?.brightness == .init(percent: 72))
     }
 
+    @Test("older refresh completion does not overwrite newer refresh snapshot")
+    func olderRefreshCompletionDoesNotOverwriteNewerRefreshSnapshot() async {
+        let full = display(id: 17, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        await controller.clearReadStateCalls()
+        await controller.setStoredState(.init(brightness: .init(percent: 20), boostEnabled: false), for: full.id)
+        let oldRefreshGate = AsyncGate()
+        await controller.setOnReadState {
+            await controller.clearOnReadState()
+            await oldRefreshGate.suspend()
+        }
+
+        let oldRefresh = Task {
+            await model.refreshDisplays()
+        }
+        await oldRefreshGate.waitUntilSuspended()
+        await controller.setStoredState(.init(brightness: .init(percent: 90), boostEnabled: true), for: full.id)
+        await model.refreshDisplays()
+        #expect(await model.snapshot.states["cg-17"] == .init(brightness: .init(percent: 90), boostEnabled: true))
+
+        await oldRefreshGate.resume()
+        await oldRefresh.value
+
+        #expect(await model.snapshot.states["cg-17"] == .init(brightness: .init(percent: 90), boostEnabled: true))
+    }
+
     @Test("older failed brightness write does not overwrite newer successful write error state")
     func olderFailedBrightnessWriteDoesNotOverwriteNewerSuccessfulWriteErrorState() async throws {
         let full = display(id: 16, name: "Full", supportLevel: .full)

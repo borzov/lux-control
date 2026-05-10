@@ -23,6 +23,7 @@ public actor BrightnessModel {
     private var commandCompletionRevision = 0
     private var stateRevision = 0
     private var stateRevisions: [String: Int] = [:]
+    private var refreshGeneration = 0
 
     public private(set) var snapshot = BrightnessSnapshot()
 
@@ -31,6 +32,8 @@ public actor BrightnessModel {
     }
 
     public func refreshDisplays() async {
+        refreshGeneration += 1
+        let generation = refreshGeneration
         let startingErrorRevision = errorRevision
         let startingStateRevisions = stateRevisions
         let displays = await controller.discover()
@@ -38,6 +41,10 @@ public actor BrightnessModel {
 
         for display in displays {
             refreshedStates[display.stableKey] = await controller.readState(for: display.id)
+        }
+
+        guard generation == refreshGeneration else {
+            return
         }
 
         let selectedStableKey = snapshot.selectedDisplay?.stableKey
