@@ -1,7 +1,5 @@
 # LuxControl
 
-![LuxControl makes a MacBook display easier to read in bright light](docs/marketing/boost-split.svg)
-
 LuxControl makes supported Mac displays brighter when the usual brightness slider is not enough.
 
 It is made for the moments when the screen looks good indoors, but starts to feel dim near a window, in a bright room, or outside. Open LuxControl from the menu bar, turn on Boost, and keep working without changing how you use your Mac.
@@ -30,3 +28,7 @@ There is no new workflow to learn. Use the menu bar icon, adjust brightness when
 ## Notes
 
 Display support depends on the Mac, the display, and the current macOS display mode. If LuxControl cannot safely boost a display, it will say so instead of pretending that Boost is available.
+
+## Releases
+
+Release builds are produced by GitHub Actions. See [docs/release-policy.md](docs/release-policy.md) for the versioning and release flow.
