@@ -20,6 +20,7 @@ public struct BrightnessSnapshot: Equatable, Sendable {
 public actor BrightnessModel {
     private let controller: DisplayControlling
     private var errorRevision = 0
+    private var stateRevision = 0
 
     public private(set) var snapshot = BrightnessSnapshot()
 
@@ -29,11 +30,12 @@ public actor BrightnessModel {
 
     public func refreshDisplays() async {
         let startingErrorRevision = errorRevision
+        let startingStateRevision = stateRevision
         let displays = await controller.discover()
-        var states: [String: DisplayState] = [:]
+        var refreshedStates: [String: DisplayState] = [:]
 
         for display in displays {
-            states[display.stableKey] = await controller.readState(for: display.id)
+            refreshedStates[display.stableKey] = await controller.readState(for: display.id)
         }
 
         let selectedStableKey = snapshot.selectedDisplay?.stableKey
@@ -41,6 +43,11 @@ public actor BrightnessModel {
         if errorRevision == startingErrorRevision {
             errorRevision += 1
         }
+        let states = mergedStates(
+            refreshedStates,
+            for: displays,
+            startingStateRevision: startingStateRevision
+        )
         snapshot = BrightnessSnapshot(
             displays: displays,
             selectedDisplay: selectedDisplay(in: displays, preserving: selectedStableKey),
@@ -55,6 +62,7 @@ public actor BrightnessModel {
 
     public func setBrightness(_ value: BrightnessValue) async throws {
         do {
+            let startingErrorRevision = errorRevision
             let display = try selectedDisplay()
             let stableKey = display.stableKey
 
@@ -68,7 +76,7 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            clearLastError()
+            clearLastErrorIfUnchanged(since: startingErrorRevision)
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
@@ -79,6 +87,7 @@ public actor BrightnessModel {
 
     public func setBoostEnabled(_ enabled: Bool) async throws {
         do {
+            let startingErrorRevision = errorRevision
             let display = try selectedDisplay()
             let stableKey = display.stableKey
 
@@ -92,7 +101,7 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            clearLastError()
+            clearLastErrorIfUnchanged(since: startingErrorRevision)
             updateStateIfDisplayExists(stableKey: stableKey) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
@@ -118,6 +127,23 @@ public actor BrightnessModel {
         return displays.first(where: \.isControllable)
     }
 
+    private func mergedStates(
+        _ refreshedStates: [String: DisplayState],
+        for displays: [Display],
+        startingStateRevision: Int
+    ) -> [String: DisplayState] {
+        guard stateRevision != startingStateRevision else {
+            return refreshedStates
+        }
+
+        let refreshedKeys = Set(displays.map(\.stableKey))
+        var states = refreshedStates
+        for (stableKey, state) in snapshot.states where refreshedKeys.contains(stableKey) {
+            states[stableKey] = state
+        }
+        return states
+    }
+
     private func updateStateIfDisplayExists(
         stableKey: String,
         _ transform: (DisplayState) -> DisplayState
@@ -128,6 +154,7 @@ public actor BrightnessModel {
 
         let current = snapshot.states[stableKey] ?? .init(brightness: .init(percent: 50), boostEnabled: false)
         snapshot.states[stableKey] = transform(current)
+        stateRevision += 1
     }
 
     private func recordFailure(_ error: any Error) -> DisplayControlError {
@@ -137,7 +164,11 @@ public actor BrightnessModel {
         return controlError
     }
 
-    private func clearLastError() {
+    private func clearLastErrorIfUnchanged(since startingErrorRevision: Int) {
+        guard errorRevision == startingErrorRevision else {
+            return
+        }
+
         errorRevision += 1
         snapshot.lastError = nil
     }
