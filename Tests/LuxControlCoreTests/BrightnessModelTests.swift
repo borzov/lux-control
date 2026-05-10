@@ -469,6 +469,34 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == nil)
     }
 
+    @Test("older brightness success does not clear newer displayNotFound error")
+    func olderBrightnessSuccessDoesNotClearNewerDisplayNotFoundError() async throws {
+        let full = display(id: 27, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+        let brightnessGate = AsyncGate()
+        await controller.setOnSetBrightness {
+            await controller.clearOnSetBrightness()
+            await brightnessGate.suspend()
+        }
+
+        let brightnessWrite = Task {
+            try await model.setBrightness(.init(percent: 74))
+        }
+        await brightnessGate.waitUntilSuspended()
+        await model.selectDisplay(stableKey: "missing")
+
+        await #expect(throws: DisplayControlError.displayNotFound) {
+            try await model.setBrightness(.init(percent: 81))
+        }
+        await brightnessGate.resume()
+        try await brightnessWrite.value
+
+        #expect(await model.snapshot.states["cg-27"]?.brightness == .init(percent: 74))
+        #expect(await model.snapshot.lastError == DisplayControlError.displayNotFound.localizedDescription)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)

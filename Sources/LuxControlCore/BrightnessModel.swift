@@ -239,6 +239,7 @@ public actor BrightnessModel {
 
     private func recordUnscopedFailure(_ error: any Error) -> DisplayControlError {
         let controlError = normalizedControlError(error)
+        nextCommandRevision += 1
         errorRevision += 1
         snapshot.lastError = controlError.localizedDescription
         return controlError
