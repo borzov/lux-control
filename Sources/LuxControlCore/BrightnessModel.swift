@@ -21,6 +21,7 @@ public actor BrightnessModel {
     private let controller: DisplayControlling
     private var errorRevision = 0
     private var nextCommandRevision: UInt64 = 0
+    private var latestCommandRevision: UInt64 = 0
     private var commandStartRevisions: [CommandKey: UInt64] = [:]
     private var stateRevision = 0
     private var stateRevisions: [String: Int] = [:]
@@ -93,7 +94,7 @@ public actor BrightnessModel {
         }
         let stableKey = display.stableKey
         let commandKey = CommandKey(stableKey: stableKey, kind: .brightness)
-        var commandRevision: UInt64?
+        var commandStart: CommandStart?
 
         do {
             guard display.supportLevel == .full || display.supportLevel == .brightnessOnly else {
@@ -101,7 +102,7 @@ public actor BrightnessModel {
             }
 
             try Task.checkCancellation()
-            commandRevision = startCommand(commandKey)
+            commandStart = startCommand(commandKey)
             do {
                 try await controller.setBrightness(value, for: display.id)
             } catch is CancellationError {
@@ -110,17 +111,20 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            guard let commandRevision else {
+            guard let commandRevision = commandStart?.revision else {
                 throw DisplayControlError.writeFailed("Command was not started.")
             }
             completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: value, boostEnabled: current.boostEnabled)
             }
         } catch is CancellationError {
+            if let commandStart {
+                rollbackCommand(commandKey, start: commandStart)
+            }
             throw CancellationError()
         } catch {
-            if let commandRevision {
-                throw recordFailure(error, for: commandKey, revision: commandRevision)
+            if let commandStart {
+                throw recordFailure(error, for: commandKey, revision: commandStart.revision)
             }
             throw recordFailureWithoutCommandRevision(error)
         }
@@ -146,7 +150,7 @@ public actor BrightnessModel {
         }
         let stableKey = display.stableKey
         let commandKey = CommandKey(stableKey: stableKey, kind: .boost)
-        var commandRevision: UInt64?
+        var commandStart: CommandStart?
 
         do {
             guard display.supportLevel == .full else {
@@ -154,7 +158,7 @@ public actor BrightnessModel {
             }
 
             try Task.checkCancellation()
-            commandRevision = startCommand(commandKey)
+            commandStart = startCommand(commandKey)
             do {
                 try await controller.setBoostEnabled(enabled, for: display.id)
             } catch is CancellationError {
@@ -163,17 +167,20 @@ public actor BrightnessModel {
                 throw normalizedControlError(error)
             }
 
-            guard let commandRevision else {
+            guard let commandRevision = commandStart?.revision else {
                 throw DisplayControlError.writeFailed("Command was not started.")
             }
             completeSuccessfulCommand(commandKey, revision: commandRevision) { current in
                 .init(brightness: current.brightness, boostEnabled: enabled)
             }
         } catch is CancellationError {
+            if let commandStart {
+                rollbackCommand(commandKey, start: commandStart)
+            }
             throw CancellationError()
         } catch {
-            if let commandRevision {
-                throw recordFailure(error, for: commandKey, revision: commandRevision)
+            if let commandStart {
+                throw recordFailure(error, for: commandKey, revision: commandStart.revision)
             }
             throw recordFailureWithoutCommandRevision(error)
         }
@@ -236,10 +243,29 @@ public actor BrightnessModel {
         stateRevisions[stableKey] = stateRevision
     }
 
-    private func startCommand(_ commandKey: CommandKey) -> UInt64 {
+    private func startCommand(_ commandKey: CommandKey) -> CommandStart {
+        let previousRevision = commandStartRevisions[commandKey]
+        let previousGlobalRevision = latestCommandRevision
         nextCommandRevision += 1
-        commandStartRevisions[commandKey] = nextCommandRevision
-        return nextCommandRevision
+        let revision = nextCommandRevision
+        latestCommandRevision = revision
+        commandStartRevisions[commandKey] = revision
+        return .init(
+            revision: revision,
+            previousRevision: previousRevision,
+            previousGlobalRevision: previousGlobalRevision
+        )
+    }
+
+    private func rollbackCommand(_ commandKey: CommandKey, start: CommandStart) {
+        guard commandStartRevisions[commandKey] == start.revision else {
+            return
+        }
+
+        commandStartRevisions[commandKey] = start.previousRevision
+        if latestCommandRevision == start.revision {
+            latestCommandRevision = start.previousGlobalRevision
+        }
     }
 
     private func isLatestCommand(_ commandKey: CommandKey, revision: UInt64) -> Bool {
@@ -247,7 +273,7 @@ public actor BrightnessModel {
     }
 
     private func isLatestGlobalCommand(revision: UInt64) -> Bool {
-        nextCommandRevision == revision
+        latestCommandRevision == revision
     }
 
     private func completeSuccessfulCommand(
@@ -276,6 +302,7 @@ public actor BrightnessModel {
     private func recordFailureWithoutCommandRevision(_ error: any Error) -> DisplayControlError {
         let controlError = normalizedControlError(error)
         nextCommandRevision += 1
+        latestCommandRevision = nextCommandRevision
         errorRevision += 1
         snapshot.lastError = controlError.localizedDescription
         return controlError
@@ -302,6 +329,7 @@ public actor BrightnessModel {
     private func recordUnscopedFailure(_ error: any Error) -> DisplayControlError {
         let controlError = normalizedControlError(error)
         nextCommandRevision += 1
+        latestCommandRevision = nextCommandRevision
         errorRevision += 1
         snapshot.lastError = controlError.localizedDescription
         return controlError
@@ -324,6 +352,12 @@ private enum ControlKind: Hashable {
 private struct CommandKey: Hashable {
     let stableKey: String
     let kind: ControlKind
+}
+
+private struct CommandStart {
+    let revision: UInt64
+    let previousRevision: UInt64?
+    let previousGlobalRevision: UInt64
 }
 
 private extension Display {

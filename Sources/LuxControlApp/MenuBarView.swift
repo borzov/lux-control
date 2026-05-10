@@ -55,7 +55,7 @@ struct MenuBarView: View {
         }
         .onDisappear {
             isMenuVisible = false
-            cancelPendingTasks()
+            cancelTransientTasks()
         }
     }
 
@@ -365,15 +365,11 @@ struct MenuBarView: View {
         snapshot.displays.first { $0.stableKey == (pendingSelectedKey ?? selectedStableKey) } ?? snapshot.selectedDisplay
     }
 
-    private func cancelPendingTasks() {
+    private func cancelTransientTasks() {
         refreshTask?.cancel()
         selectTask?.cancel()
-        boostWriteTask?.cancel()
-        brightnessWriteTask?.cancel()
         refreshTask = nil
         selectTask = nil
-        boostWriteTask = nil
-        brightnessWriteTask = nil
         pendingSelectedKey = nil
         isRefreshing = false
     }
