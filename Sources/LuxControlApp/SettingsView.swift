@@ -5,14 +5,14 @@ struct SettingsView: View {
     let model: BrightnessModel
 
     @State private var snapshot = BrightnessSnapshot()
-    @AppStorage("launchAtLogin") private var launchAtLogin = false
-    @AppStorage("restoreOnQuit") private var restoreOnQuit = true
+    @State private var isRefreshing = false
 
     var body: some View {
         TabView {
             Form {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                Toggle("Restore display state on quit", isOn: $restoreOnQuit)
+                Text("General settings will be available when system service integration is enabled.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(20)
             .tabItem {
@@ -45,6 +45,7 @@ struct SettingsView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+                .disabled(isRefreshing)
             }
 
             ScrollView {
@@ -59,17 +60,37 @@ struct SettingsView: View {
     }
 
     private var diagnosticsText: String {
-        DiagnosticsReport.make(
+        let report = DiagnosticsReport.make(
             appVersion: "0.1.0",
             osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
             displays: snapshot.displays,
             states: snapshot.states
         )
+
+        guard let lastError = snapshot.lastError else {
+            return report
+        }
+
+        return "\(report)\nLast error: \(lastError)"
     }
 
     private func refreshDiagnostics() async {
+        let shouldRefresh = await MainActor.run {
+            guard !isRefreshing else {
+                return false
+            }
+            isRefreshing = true
+            return true
+        }
+        guard shouldRefresh else {
+            return
+        }
+
         await model.refreshDisplays()
         await refreshSnapshot()
+        await MainActor.run {
+            isRefreshing = false
+        }
     }
 
     private func refreshSnapshot() async {

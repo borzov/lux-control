@@ -8,6 +8,7 @@ struct MenuBarView: View {
     @State private var brightness = 50.0
     @State private var boostEnabled = false
     @State private var isRefreshing = false
+    @State private var brightnessWriteTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -76,7 +77,12 @@ struct MenuBarView: View {
                 Image(systemName: "sun.min")
                     .foregroundStyle(.secondary)
 
-                Slider(value: brightnessBinding, in: 0...100, step: 1)
+                Slider(
+                    value: brightnessBinding,
+                    in: 0...100,
+                    step: 1,
+                    onEditingChanged: handleBrightnessEditingChanged
+                )
                     .disabled(!selectedDisplaySupportsBrightness)
 
                 Image(systemName: "sun.max")
@@ -132,16 +138,7 @@ struct MenuBarView: View {
         Binding {
             brightness
         } set: { value in
-            let roundedValue = value.rounded()
-            brightness = roundedValue
-            Task {
-                do {
-                    try await model.setBrightness(.init(percent: Int(roundedValue)))
-                } catch {
-                    // BrightnessModel records command failures in snapshot.lastError.
-                }
-                await refreshSnapshot()
-            }
+            brightness = value.rounded()
         }
     }
 
@@ -183,6 +180,27 @@ struct MenuBarView: View {
     private func refreshSnapshot() async {
         let snapshot = await model.snapshot
         applySnapshot(snapshot)
+    }
+
+    private func handleBrightnessEditingChanged(_ isEditing: Bool) {
+        guard !isEditing else {
+            return
+        }
+
+        brightnessWriteTask?.cancel()
+        let percent = Int(brightness.rounded())
+        brightnessWriteTask = Task {
+            do {
+                try await model.setBrightness(.init(percent: percent))
+            } catch {
+                // BrightnessModel records command failures in snapshot.lastError.
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+            await refreshSnapshot()
+        }
     }
 
     private func supportDescription(for display: Display?) -> String {
