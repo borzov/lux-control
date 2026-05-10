@@ -62,6 +62,24 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.selectedDisplay == second)
     }
 
+    @Test("refreshDisplays clears existing lastError")
+    func refreshDisplaysClearsExistingLastError() async {
+        let full = display(id: 8, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        await controller.setBrightnessError(TestWriteError(message: "transient failure"))
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        await #expect(throws: DisplayControlError.writeFailed("transient failure")) {
+            try await model.setBrightness(.init(percent: 42))
+        }
+        #expect(await model.snapshot.lastError != nil)
+
+        await model.refreshDisplays()
+
+        #expect(await model.snapshot.lastError == nil)
+    }
+
     @Test("setBrightness routes to selected display and updates snapshot state")
     func setBrightnessRoutesToSelectedDisplayAndUpdatesSnapshotState() async throws {
         let selected = display(id: 11, name: "Selected", supportLevel: .full)
@@ -90,6 +108,17 @@ struct BrightnessModelTests {
         }
         #expect(await controller.setBoostCalls.isEmpty)
         #expect(await model.snapshot.states["cg-21"]?.boostEnabled == false)
+    }
+
+    @Test("setBoostEnabled throws displayNotFound when no display is selected")
+    func setBoostEnabledThrowsDisplayNotFoundWhenNoDisplayIsSelected() async {
+        let controller = MockDisplayController(displays: [])
+        let model = BrightnessModel(controller: controller)
+
+        await #expect(throws: DisplayControlError.displayNotFound) {
+            try await model.setBoostEnabled(true)
+        }
+        #expect(await model.snapshot.lastError == DisplayControlError.displayNotFound.localizedDescription)
     }
 
     @Test("setBrightness succeeds for brightnessOnly display")
