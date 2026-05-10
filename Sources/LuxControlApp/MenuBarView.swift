@@ -121,7 +121,7 @@ struct MenuBarView: View {
                 Image(systemName: "sun.max")
                     .foregroundStyle(.secondary)
 
-                Text("\(Int(brightness.rounded()))%")
+                Text(isChangingSelection ? "--%" : "\(Int(brightness.rounded()))%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .trailing)
@@ -157,6 +157,9 @@ struct MenuBarView: View {
                     return
                 }
                 await refreshSnapshot()
+                await MainActor.run {
+                    selectTask = nil
+                }
             }
         }
     }
@@ -197,6 +200,9 @@ struct MenuBarView: View {
                 }
                 await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
                 await refreshSnapshot()
+                await MainActor.run {
+                    boostWriteTask = nil
+                }
             }
         }
     }
@@ -329,6 +335,9 @@ struct MenuBarView: View {
             }
             await restoreSelectedDisplayIfNeeded(commandTargetStableKey: targetStableKey)
             await refreshSnapshot()
+            await MainActor.run {
+                brightnessWriteTask = nil
+            }
         }
     }
 
@@ -372,7 +381,7 @@ struct MenuBarView: View {
 
     private func restoreSelectedDisplayIfNeeded(commandTargetStableKey: String) async {
         let desiredStableKey = await MainActor.run {
-            selectedStableKey
+            pendingSelectedKey ?? selectedStableKey
         }
 
         guard !desiredStableKey.isEmpty,
@@ -402,6 +411,10 @@ struct MenuBarView: View {
     }
 
     private func supportDescription(for display: Display?) -> String {
+        if isChangingSelection {
+            return "Updating selected display..."
+        }
+
         guard let display else {
             return "No display selected."
         }
