@@ -15,6 +15,7 @@ final class EDRBoostClient: DisplayBoostClient, @unchecked Sendable {
 
     private let store = EDRBoostWindowStore()
     private let transferTableStore = DisplayTransferTableStore()
+    private static let terminationGuard = BoostTerminationGuard()
 
     private init() {}
 
@@ -34,11 +35,59 @@ final class EDRBoostClient: DisplayBoostClient, @unchecked Sendable {
 
     func setBoostEnabled(_ enabled: Bool, for displayID: UInt32) async throws {
         if enabled {
+            // Arm the guard before touching the gamma table so an abnormal exit
+            // mid-enable still triggers a restore.
+            Self.terminationGuard.arm()
             try await store.enable(for: displayID)
             try transferTableStore.enableBoost(for: displayID)
         } else {
             transferTableStore.disableBoost(for: displayID)
             await store.disable(for: displayID)
+        }
+    }
+}
+
+/// Guarantees the display gamma transfer table is restored to the system
+/// default if the process exits or crashes while a Boost is active.
+///
+/// Boost mutates the global gamma table via `CGSetDisplayTransferByTable`. The
+/// normal disable path restores the saved table precisely, but an abnormal exit
+/// (crash, logout/restart `SIGTERM`, an uncaught signal) bypasses it and would
+/// otherwise leave the display visibly distorted until the user logs out.
+///
+/// `CGDisplayRestoreColorSyncSettings` resets every display's gamma to the
+/// system/ColorSync default — a coarse but reliable last resort. It is not
+/// strictly async-signal-safe, but it runs on a path that is already heading to
+/// a guaranteed death (handlers re-raise the default action), so a best-effort
+/// restore is preferable to leaving the screen broken.
+///
+/// `SIGKILL` (Force Quit) cannot be intercepted and is out of scope.
+private final class BoostTerminationGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var armed = false
+
+    private static let fatalSignals: [Int32] = [
+        SIGINT, SIGTERM, SIGHUP, SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGFPE,
+    ]
+
+    func arm() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !armed else {
+            return
+        }
+        armed = true
+
+        atexit {
+            CGDisplayRestoreColorSyncSettings()
+        }
+
+        for signalNumber in Self.fatalSignals {
+            signal(signalNumber) { received in
+                CGDisplayRestoreColorSyncSettings()
+                signal(received, SIG_DFL)
+                raise(received)
+            }
         }
     }
 }
