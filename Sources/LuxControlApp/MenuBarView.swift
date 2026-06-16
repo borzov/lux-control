@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import LuxControlCore
 
@@ -47,6 +48,12 @@ struct MenuBarView: View {
         .onDisappear {
             isMenuVisible = false
             cancelTransientTasks()
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didChangeScreenParametersNotification
+        )) { _ in
+            // A display was connected, disconnected, or reconfigured.
+            startRefreshTask()
         }
     }
 
@@ -297,6 +304,7 @@ struct MenuBarView: View {
             brightness
         } set: { value in
             brightness = value.rounded()
+            scheduleLiveBrightnessWrite()
         }
     }
 
@@ -398,6 +406,34 @@ struct MenuBarView: View {
             return
         }
         applySnapshot(snapshot)
+    }
+
+    private func scheduleLiveBrightnessWrite() {
+        guard let targetStableKey = selectedStableKeyForCommand else {
+            return
+        }
+
+        brightnessWriteTask?.cancel()
+        let percent = Int(brightness.rounded())
+        brightnessWriteTask = Task {
+            // Debounce rapid slider movements so the display API is not flooded
+            // while still giving live feedback during the drag.
+            try? await Task.sleep(for: .milliseconds(60))
+            guard !Task.isCancelled else {
+                return
+            }
+            do {
+                try await model.setBrightness(.init(percent: percent), forStableKey: targetStableKey)
+            } catch {
+                // BrightnessModel records command failures in snapshot.lastError.
+            }
+            guard isTaskStillActive() else {
+                return
+            }
+            await MainActor.run {
+                brightnessWriteTask = nil
+            }
+        }
     }
 
     private func handleBrightnessEditingChanged(_ isEditing: Bool) {

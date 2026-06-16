@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import LuxControlCore
@@ -18,6 +19,7 @@ public struct CGDisplayDiscovery: DisplayDiscovering {
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
         let brightnessClient = DisplayServicesBrightnessClient()
         let boostClient = EDRBoostClient.shared
+        let localizedNames = await Self.localizedNames()
 
         var displays: [Display] = []
         for id in ids.prefix(Int(count)) {
@@ -33,9 +35,10 @@ public struct CGDisplayDiscovery: DisplayDiscovering {
                 supportLevel = .detectOnly
             }
 
+            let fallbackName = isBuiltin ? "Built-in Display" : "External Display"
             displays.append(Display(
                 id: .directDisplayID(id),
-                name: isBuiltin ? "Built-in Display" : "External Display",
+                name: localizedNames[id] ?? fallbackName,
                 vendorNumber: nonZero(CGDisplayVendorNumber(id)),
                 modelNumber: nonZero(CGDisplayModelNumber(id)),
                 serialNumber: nonZero(CGDisplaySerialNumber(id)),
@@ -48,5 +51,25 @@ public struct CGDisplayDiscovery: DisplayDiscovering {
 
     private func nonZero(_ value: UInt32) -> UInt32? {
         value == 0 ? nil : value
+    }
+
+    /// Maps `CGDirectDisplayID` to the OS-localized display name (e.g. "DELL
+    /// U2720Q") so multiple external monitors are distinguishable in the picker.
+    @MainActor
+    private static func localizedNames() -> [UInt32: String] {
+        var names: [UInt32: String] = [:]
+        for screen in NSScreen.screens {
+            guard let number = screen.deviceDescription[
+                NSDeviceDescriptionKey("NSScreenNumber")
+            ] as? NSNumber else {
+                continue
+            }
+
+            let name = screen.localizedName
+            if !name.isEmpty {
+                names[number.uint32Value] = name
+            }
+        }
+        return names
     }
 }
