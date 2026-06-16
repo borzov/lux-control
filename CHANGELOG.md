@@ -2,7 +2,7 @@
 
 All notable changes to LuxControl are documented here.
 
-## Unreleased
+## 0.1.2 - 2026-06-16
 
 ### Added
 

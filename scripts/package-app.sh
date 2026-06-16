@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:-0.1.1}"
+version="${1:-0.1.2}"
 build_number="${2:-1}"
 configuration="${CONFIGURATION:-release}"
 
