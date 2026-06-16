@@ -2,6 +2,20 @@
 
 All notable changes to LuxControl are documented here.
 
+## Unreleased
+
+### Added
+
+- Global hotkeys are now active: ⌘⌥= brighten, ⌘⌥- dim, ⌘⌥Space toggle Boost on the selected display.
+- Per-display Boost is now persisted and re-applied on launch for displays that had it enabled.
+- Real localized display names in the picker, so multiple external monitors are distinguishable.
+- Automatic display-list refresh when a display is connected, disconnected, or reconfigured.
+- Live brightness updates while dragging the slider (previously applied only on release).
+
+### Fixed
+
+- Display gamma is now restored if the app exits or crashes while Boost is active, preventing a distorted screen until logout. Force Quit (SIGKILL) cannot be intercepted and is out of scope.
+
 ## 0.1.1 - 2026-05-10
 
 ### Added
