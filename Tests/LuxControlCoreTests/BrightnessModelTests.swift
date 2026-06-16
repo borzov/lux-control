@@ -868,6 +868,121 @@ struct BrightnessModelTests {
         #expect(await model.snapshot.lastError == nil)
     }
 
+    @Test("adjustBrightness changes the selected display brightness by the delta")
+    func adjustBrightnessChangesSelectedDisplayByDelta() async throws {
+        let full = display(id: 200, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        await controller.setStoredState(.init(brightness: .init(percent: 40), boostEnabled: false), for: full.id)
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        try await model.adjustBrightness(by: 10)
+
+        #expect(await model.snapshot.states["cg-200"]?.brightness == .init(percent: 50))
+    }
+
+    @Test("adjustBrightness clamps to the valid range")
+    func adjustBrightnessClampsToValidRange() async throws {
+        let full = display(id: 201, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        await controller.setStoredState(.init(brightness: .init(percent: 95), boostEnabled: false), for: full.id)
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        try await model.adjustBrightness(by: 25)
+
+        #expect(await model.snapshot.states["cg-201"]?.brightness == .init(percent: 100))
+    }
+
+    @Test("adjustBrightness throws displayNotFound when no display is selected")
+    func adjustBrightnessThrowsWhenNoDisplaySelected() async {
+        let controller = MockDisplayController(displays: [])
+        let model = BrightnessModel(controller: controller)
+
+        await #expect(throws: DisplayControlError.displayNotFound) {
+            try await model.adjustBrightness(by: 10)
+        }
+    }
+
+    @Test("toggleBoost flips boost on the selected full display")
+    func toggleBoostFlipsBoostOnSelectedFullDisplay() async throws {
+        let full = display(id: 202, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        try await model.toggleBoost()
+        #expect(await model.snapshot.states["cg-202"]?.boostEnabled == true)
+
+        try await model.toggleBoost()
+        #expect(await model.snapshot.states["cg-202"]?.boostEnabled == false)
+    }
+
+    @Test("toggleBoost throws unsupported when the selected display is not full")
+    func toggleBoostThrowsUnsupportedForNonFullDisplay() async {
+        let brightnessOnly = display(id: 203, name: "Brightness", supportLevel: .brightnessOnly)
+        let controller = MockDisplayController(displays: [brightnessOnly])
+        let model = BrightnessModel(controller: controller)
+        await model.refreshDisplays()
+
+        await #expect(throws: DisplayControlError.unsupported(.brightnessOnly)) {
+            try await model.toggleBoost()
+        }
+    }
+
+    @Test("successful boost write is persisted per display")
+    func successfulBoostWriteIsPersisted() async throws {
+        let full = display(id: 210, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let (store, defaults, suite) = try makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = BrightnessModel(controller: controller, store: store)
+        await model.refreshDisplays()
+
+        try await model.setBoostEnabled(true, forStableKey: full.stableKey)
+
+        #expect(try store.loadState(forStableKey: "cg-210")?.boostEnabled == true)
+    }
+
+    @Test("restorePersistedBoosts re-enables boost on full displays that had it on")
+    func restorePersistedBoostsReenablesBoost() async throws {
+        let full = display(id: 211, name: "Full", supportLevel: .full)
+        let controller = MockDisplayController(displays: [full])
+        let (store, defaults, suite) = try makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        try store.save(state: .init(brightness: .init(percent: 70), boostEnabled: true), forStableKey: "cg-211")
+        let model = BrightnessModel(controller: controller, store: store)
+        await model.refreshDisplays()
+
+        await model.restorePersistedBoosts()
+
+        #expect(await controller.setBoostCalls == [full.id])
+        #expect(await model.snapshot.states["cg-211"]?.boostEnabled == true)
+    }
+
+    @Test("restorePersistedBoosts ignores non-full displays and displays without a saved boost")
+    func restorePersistedBoostsIgnoresOthers() async throws {
+        let full = display(id: 212, name: "Full", supportLevel: .full)
+        let brightnessOnly = display(id: 213, name: "Brightness", supportLevel: .brightnessOnly)
+        let controller = MockDisplayController(displays: [full, brightnessOnly])
+        let (store, defaults, suite) = try makeStore()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        try store.save(state: .init(brightness: .init(percent: 50), boostEnabled: false), forStableKey: "cg-212")
+        try store.save(state: .init(brightness: .init(percent: 50), boostEnabled: true), forStableKey: "cg-213")
+        let model = BrightnessModel(controller: controller, store: store)
+        await model.refreshDisplays()
+
+        await model.restorePersistedBoosts()
+
+        #expect(await controller.setBoostCalls == [])
+    }
+
+    private func makeStore() throws -> (SettingsStore, UserDefaults, String) {
+        let suite = "BrightnessModelTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        return (SettingsStore(defaults: defaults), defaults, suite)
+    }
+
     private func display(id: UInt32, name: String, supportLevel: DisplaySupportLevel) -> Display {
         Display(
             id: .directDisplayID(id),

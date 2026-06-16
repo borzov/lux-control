@@ -19,6 +19,7 @@ public struct BrightnessSnapshot: Equatable, Sendable {
 
 public actor BrightnessModel {
     private let controller: DisplayControlling
+    private let store: SettingsStore?
     private var errorRevision = 0
     private var nextCommandRevision: UInt64 = 0
     private var latestCommandRevision: UInt64 = 0
@@ -29,8 +30,9 @@ public actor BrightnessModel {
 
     public private(set) var snapshot = BrightnessSnapshot()
 
-    public init(controller: DisplayControlling) {
+    public init(controller: DisplayControlling, store: SettingsStore? = nil) {
         self.controller = controller
+        self.store = store
     }
 
     public func refreshDisplays() async {
@@ -186,6 +188,51 @@ public actor BrightnessModel {
         }
     }
 
+    /// Adjusts the selected display's brightness by `delta` percentage points.
+    /// Used by global hotkeys, which always act on the current selection.
+    public func adjustBrightness(by delta: Int) async throws {
+        let display: Display
+        do {
+            display = try selectedDisplay()
+        } catch {
+            throw recordUnscopedFailure(error)
+        }
+
+        let current = snapshot.states[display.stableKey]?.brightness.percent ?? 50
+        try await setBrightness(.init(percent: current + delta), forStableKey: display.stableKey)
+    }
+
+    /// Re-applies Boost at launch on `.full` displays that had it enabled when
+    /// the app last ran. Brightness is intentionally not re-applied — the
+    /// hardware retains it on its own.
+    public func restorePersistedBoosts() async {
+        guard let store else {
+            return
+        }
+
+        for display in snapshot.displays where display.supportLevel == .full {
+            guard let saved = try? store.loadState(forStableKey: display.stableKey),
+                  saved.boostEnabled else {
+                continue
+            }
+
+            try? await setBoostEnabled(true, forStableKey: display.stableKey)
+        }
+    }
+
+    /// Toggles Boost on the selected display. Used by global hotkeys.
+    public func toggleBoost() async throws {
+        let display: Display
+        do {
+            display = try selectedDisplay()
+        } catch {
+            throw recordUnscopedFailure(error)
+        }
+
+        let current = snapshot.states[display.stableKey]?.boostEnabled ?? false
+        try await setBoostEnabled(!current, forStableKey: display.stableKey)
+    }
+
     private func selectedDisplay() throws -> Display {
         guard let display = snapshot.selectedDisplay else {
             throw DisplayControlError.displayNotFound
@@ -287,6 +334,17 @@ public actor BrightnessModel {
 
         clearLastErrorIfLatestGlobalCommand(revision: revision)
         updateStateIfDisplayExists(stableKey: commandKey.stableKey, transform)
+        persistState(forStableKey: commandKey.stableKey)
+    }
+
+    private func persistState(forStableKey stableKey: String) {
+        guard let store, let state = snapshot.states[stableKey] else {
+            return
+        }
+
+        // Persistence failures must not fail the user's command; the value is
+        // already applied to the display.
+        try? store.save(state: state, forStableKey: stableKey)
     }
 
     private func recordFailure(_ error: any Error, for commandKey: CommandKey, revision: UInt64) -> DisplayControlError {
